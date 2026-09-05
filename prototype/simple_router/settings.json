@@ -1,0 +1,15 @@
+{
+  "budget_pct": 1.0,
+  "quantile_groups": 4,
+  "calibration_operations": 100,
+  "forecast_operations": 100,
+  "prior_strength": 20.0,
+  "min_conversion": 0.5,
+  "max_expected_latency_sec": 180.0,
+  "goal_order": ["daily_turnover_min", "traffic_percentage", "volume_share_pct"],
+  "provider_goals": {
+    "vipay": {"daily_turnover_min": 300000, "volume_share_pct": 40},
+    "payflow": {"daily_turnover_min": 250000, "volume_share_pct": 35},
+    "quickpay": {"daily_turnover_min": 200000, "volume_share_pct": 25}
+  }
+}
