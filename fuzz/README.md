@@ -42,28 +42,28 @@ SIP-защищённый `/usr/bin/env`): либо brew-ruby, либо абсо�
 
 ```bash
 cd fuzz
-export ASAN_OPTIONS="allocator_may_return_null=1:detect_leaks=0:use_sigaltstack=0"
-
-DYLD_INSERT_LIBRARIES=$(ruby -e 'require "ruzzy"; print Ruzzy::ASAN_PATH') \
-  ruby tracer.rb corpus \
-    -artifact_prefix=findings/ \
-    -max_len=64 \
-    -max_total_time=1800 \
-    -print_final_stats=1
+./run.sh queue_harness.rb 1800      # харнесс и сколько секунд гонять
 ```
 
-- `corpus` — накопленные интересные входы, переиспользуются между запусками.
-  Не удаляй: с ним следующий прогон стартует не с нуля.
-- `findings/` — сюда падают файлы `crash-*`.
-- `-max_len=64` — заявка занимает ~30 байт, длиннее генерировать бессмысленно.
-- `-max_total_time` — в секундах. На macOS нет `timeout(1)`, ограничивай только так.
+Без аргументов — `router_harness.rb` на 30 минут. Скрипт сам заводит
+`corpus_<имя>/` и `findings_<имя>/`, так что харнессы не мешают друг другу.
 
-Другой харнесс — через переменную, со своим корпусом и своей папкой находок:
+- `corpus_*` — накопленные интересные входы. **Не удаляй:** с ними следующий
+  прогон стартует не с нуля, а продолжает с достигнутого покрытия.
+- `findings_*` — сюда падают файлы `crash-*`.
+- Второй аргумент — секунды. На macOS нет `timeout(1)`, ограничивай только так.
+
+Несколько харнессов гоняются параллельно, у каждого свой корпус:
 
 ```bash
-HARNESS=dedup_harness.rb DYLD_INSERT_LIBRARIES=... \
-  ruby tracer.rb corpus_dedup -artifact_prefix=findings_dedup/
+nohup ./run.sh queue_harness.rb 3600 > queue.log 2>&1 &
+nohup ./run.sh config_harness.rb 3600 > config.log 2>&1 &
 ```
+
+**`DYLD_INSERT_LIBRARIES` нельзя экспортировать.** Скрипт передаёт её только
+команде `ruby`. При глобальном `export` она достаётся и системным утилитам, а
+`/bin/sh`, `mkdir` и прочие на Apple Silicon собраны под `arm64e`, тогда как
+dylib ruzzy — `arm64`: всё падает с `incompatible architecture`.
 
 ## Харнессы
 
