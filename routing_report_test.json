@@ -5,173 +5,179 @@
   "duplicate_requests": 0,
   "distribution": {
     "vipay": {
-      "count": 21,
-      "share_pct": 23.864,
+      "count": 22,
+      "share_pct": 28.571,
       "target_pct": 40.0,
-      "deviation_pp": -16.136,
-      "volume_rub": 438000.0,
-      "volume_share_pct": 12.537,
+      "deviation_pp": -11.429,
+      "volume_rub": 501500.0,
+      "volume_share_pct": 16.842,
       "volume_target_pct": 40,
-      "sent": 21,
-      "rejected": 0,
-      "expired": 0,
-      "observed_conversion": 1.0,
-      "avg_latency_sec": 39.75585714285713,
-      "profit_rub": 1315.29,
-      "peak_active_count": 2
+      "sent": 26,
+      "rejected": 2,
+      "expired": 2,
+      "observed_conversion": 0.8461538461538461,
+      "avg_latency_sec": 43.34946153846153,
+      "profit_rub": 1513.34,
+      "peak_active_count": 3
     },
     "payflow": {
       "count": 17,
-      "share_pct": 19.318,
+      "share_pct": 22.078,
       "target_pct": 35.0,
-      "deviation_pp": -15.682,
-      "volume_rub": 89200.0,
-      "volume_share_pct": 2.553,
+      "deviation_pp": -12.922,
+      "volume_rub": 95700.0,
+      "volume_share_pct": 3.214,
       "volume_target_pct": 35,
       "sent": 17,
       "rejected": 0,
       "expired": 0,
       "observed_conversion": 1.0,
-      "avg_latency_sec": 51.840882352941165,
-      "profit_rub": 433.32,
+      "avg_latency_sec": 50.896529411764696,
+      "profit_rub": 469.34,
       "peak_active_count": 3
     },
     "quickpay": {
-      "count": 50,
-      "share_pct": 56.818,
+      "count": 38,
+      "share_pct": 49.351,
       "target_pct": 25.0,
-      "deviation_pp": 31.818,
-      "volume_rub": 2966500.0,
-      "volume_share_pct": 84.91,
+      "deviation_pp": 24.351,
+      "volume_rub": 2380500.0,
+      "volume_share_pct": 79.944,
       "volume_target_pct": 25,
       "sent": 50,
-      "rejected": 0,
-      "expired": 0,
-      "observed_conversion": 1.0,
-      "avg_latency_sec": 28.91924,
-      "profit_rub": 20869.83,
-      "peak_active_count": 2
+      "rejected": 10,
+      "expired": 2,
+      "observed_conversion": 0.76,
+      "avg_latency_sec": 30.52788,
+      "profit_rub": 16509.23,
+      "peak_active_count": 3
     }
   },
   "distribution_basis": "new final approved external payouts only; initial turnover and fallback excluded",
   "fallback": {
-    "count": 2,
-    "share_of_all_pct": 2.2222222222222223,
-    "profit_rub": 17.57
+    "count": 13,
+    "share_of_all_pct": 14.444444444444445,
+    "profit_rub": 5183.41
   },
   "skip_reasons": {
     "bank_not_supported": 84,
-    "expected_latency_above_quality_limit": 6,
+    "expected_latency_above_quality_limit": 7,
     "amount_exceeds_limit": 33,
     "amount_below_min": 16
   },
   "observed_obstacles": {
     "bank_not_supported": 106,
-    "budget_insufficient_for_concession": 7,
+    "rejected": 12,
+    "budget_insufficient_for_concession": 2,
     "amount_below_min": 16,
     "amount_exceeds_limit": 33,
-    "expected_latency_above_quality_limit": 6,
-    "daily_amount_limit": 19
+    "expired": 4,
+    "expected_latency_above_quality_limit": 7,
+    "daily_amount_limit": 20
   },
   "projected_daily_utilization": {
     "vipay": {
-      "used": 3638000.0,
+      "used": 3701500.0,
       "limit": 5000000,
-      "utilization_pct": 72.76,
+      "utilization_pct": 74.03,
       "initial_approved_rub": 3200000.0,
-      "new_approved_rub": 438000.0,
+      "new_approved_rub": 501500.0,
       "reserved_rub": 0.0,
       "basis": "current-day imported approved plus new approvals; reservations shown separately"
     },
     "payflow": {
-      "used": 2989200.0,
+      "used": 2995700.0,
       "limit": 3000000,
-      "utilization_pct": 99.64,
+      "utilization_pct": 99.85666666666667,
       "initial_approved_rub": 2900000.0,
-      "new_approved_rub": 89200.0,
+      "new_approved_rub": 95700.0,
       "reserved_rub": 0.0,
       "basis": "current-day imported approved plus new approvals; reservations shown separately"
     },
     "quickpay": {
-      "used": 4066500.0,
+      "used": 3480500.0,
       "limit": 8000000,
-      "utilization_pct": 50.83125,
+      "utilization_pct": 43.50625,
       "initial_approved_rub": 1100000.0,
-      "new_approved_rub": 2966500.0,
+      "new_approved_rub": 2380500.0,
       "reserved_rub": 0.0,
       "basis": "current-day imported approved plus new approvals; reservations shown separately"
     }
   },
   "recommendations": [
-    "vipay: доля 23.9% против цели traffic_percentage 40.0% (-16.1 pp). Основная причина исключений — bank_not_supported (49 раз). Ослабить это ограничение в настройках vipay или снизить traffic_percentage до 24%.",
-    "vipay: доля по объёму 12.5% против цели volume_share_pct 40% (-27.5 pp) при обороте 438000.0 ₽. Поднять limit_amount_max или переставить volume_share_pct выше в goal_order.",
-    "payflow: дневной лимит выработан на 99.6% (2989200.0 из 3000000 ₽), 19 раз заявка отклонена по daily_amount_limit. Снизить traffic_percentage с 35.0% или поднять daily_amount_limit.",
-    "payflow: доля 19.3% против цели traffic_percentage 35.0% (-15.7 pp). Основная причина исключений — bank_not_supported (57 раз). Ослабить это ограничение в настройках payflow или снизить traffic_percentage до 19%.",
-    "payflow: доля по объёму 2.6% против цели volume_share_pct 35% (-32.4 pp) при обороте 89200.0 ₽. Поднять limit_amount_max или переставить volume_share_pct выше в goal_order.",
-    "quickpay: доля 56.8% против цели traffic_percentage 25.0% (+31.8 pp). Поднять traffic_percentage до 57% либо расширить лимиты и banks у остальных провайдеров, чтобы разгрузить quickpay.",
-    "spacepayments принял 2 из 90 заявок (2.2%) как self-provider: для них не осталось ни одного допустимого внешнего провайдера. Расширить banks или ослабить limit_amount_min/limit_amount_max у внешних провайдеров, чтобы вернуть этот трафик.",
-    "Главная причина исключений по всем провайдерам — bank_not_supported (106 раз из 187). Это самый дешёвый параметр для пересмотра: он отсекает кандидатов до того, как заработают soft-цели.",
-    "Бюджет уступок за 2026-07-30 израсходован на 91.1% (1267.66 из 1392.07 ₽). Поднять budget_pct с 1.0%, чтобы soft-цели могли перебивать выбор по прибыли чаще."
+    "vipay: доля 28.6% против цели traffic_percentage 40.0% (-11.4 pp). Основная причина исключений — bank_not_supported (49 раз). Ослабить это ограничение в настройках vipay или снизить traffic_percentage до 29%.",
+    "vipay: доля по объёму 16.8% против цели volume_share_pct 40% (-23.2 pp) при обороте 501500.0 ₽. Поднять limit_amount_max или переставить volume_share_pct выше в goal_order.",
+    "payflow: дневной лимит выработан на 99.9% (2995700.0 из 3000000 ₽), 20 раз заявка отклонена по daily_amount_limit. Снизить traffic_percentage с 35.0% или поднять daily_amount_limit.",
+    "payflow: доля 22.1% против цели traffic_percentage 35.0% (-12.9 pp). Основная причина исключений — bank_not_supported (57 раз). Ослабить это ограничение в настройках payflow или снизить traffic_percentage до 22%.",
+    "payflow: доля по объёму 3.2% против цели volume_share_pct 35% (-31.8 pp) при обороте 95700.0 ₽. Поднять limit_amount_max или переставить volume_share_pct выше в goal_order.",
+    "quickpay: доля 49.4% против цели traffic_percentage 25.0% (+24.4 pp). Поднять traffic_percentage до 49% либо расширить лимиты и banks у остальных провайдеров, чтобы разгрузить quickpay.",
+    "quickpay: 12 неуспешных попыток из 50 отправок (24.0%), каждая добавляет шаг каскада. Сузить limit_amount_min/limit_amount_max под сегменты с высокой конверсией или снизить traffic_percentage.",
+    "spacepayments принял 13 из 90 заявок (14.4%) как self-provider: для них не осталось ни одного допустимого внешнего провайдера. Расширить banks или ослабить limit_amount_min/limit_amount_max у внешних провайдеров, чтобы вернуть этот трафик.",
+    "Главная причина исключений по всем провайдерам — bank_not_supported (106 раз из 184). Это самый дешёвый параметр для пересмотра: он отсекает кандидатов до того, как заработают soft-цели.",
+    "Бюджет уступок за 2026-07-30 израсходован на 97.2% (1343.24 из 1381.62 ₽). Поднять budget_pct с 1.0%, чтобы soft-цели могли перебивать выбор по прибыли чаще."
   ],
   "goals": {
     "vipay": {
       "2026-07-30": {
         "minimum_target_rub": 300000.0,
-        "approved_rub": 3638000.0,
+        "approved_rub": 3701500.0,
         "minimum_deficit_rub": 0,
-        "count_share_pct": 23.863636363636363,
+        "count_share_pct": 28.571428571428573,
         "count_target_pct": 40.0,
         "count_basis": "new observed approvals; initial approved count is not supplied",
-        "count_deviation_pp": -16.136363636363637,
-        "volume_share_pct": 34.02003048523897,
+        "count_deviation_pp": -11.428571428571427,
+        "volume_share_pct": 36.36872770861786,
         "volume_target_pct": 40,
         "volume_basis": "current-day imported approved plus new approvals",
-        "volume_deviation_pp": -5.979969514761031,
+        "volume_deviation_pp": -3.631272291382139,
         "observed_obstacles": {
           "bank_not_supported": 49,
-          "budget_insufficient_for_concession": 6,
+          "rejected": 2,
+          "budget_insufficient_for_concession": 2,
           "amount_below_min": 8,
-          "amount_exceeds_limit": 10
+          "amount_exceeds_limit": 10,
+          "expired": 2
         }
       }
     },
     "payflow": {
       "2026-07-30": {
         "minimum_target_rub": 250000.0,
-        "approved_rub": 2989200.0,
+        "approved_rub": 2995700.0,
         "minimum_deficit_rub": 0,
-        "count_share_pct": 19.318181818181817,
+        "count_share_pct": 22.07792207792208,
         "count_target_pct": 35.0,
         "count_basis": "new observed approvals; initial approved count is not supplied",
-        "count_deviation_pp": -15.681818181818183,
-        "volume_share_pct": 27.95290685169773,
+        "count_deviation_pp": -12.922077922077921,
+        "volume_share_pct": 29.433958556451852,
         "volume_target_pct": 35,
         "volume_basis": "current-day imported approved plus new approvals",
-        "volume_deviation_pp": -7.04709314830227,
+        "volume_deviation_pp": -5.566041443548148,
         "observed_obstacles": {
-          "expected_latency_above_quality_limit": 6,
+          "expected_latency_above_quality_limit": 7,
           "bank_not_supported": 57,
           "amount_exceeds_limit": 23,
-          "daily_amount_limit": 19,
-          "budget_insufficient_for_concession": 1
+          "daily_amount_limit": 20
         }
       }
     },
     "quickpay": {
       "2026-07-30": {
         "minimum_target_rub": 200000.0,
-        "approved_rub": 4066500.0,
+        "approved_rub": 3480500.0,
         "minimum_deficit_rub": 0,
-        "count_share_pct": 56.81818181818182,
+        "count_share_pct": 49.35064935064935,
         "count_target_pct": 25.0,
         "count_basis": "new observed approvals; initial approved count is not supplied",
-        "count_deviation_pp": 31.81818181818182,
-        "volume_share_pct": 38.0270626630633,
+        "count_deviation_pp": 24.35064935064935,
+        "volume_share_pct": 34.19731373493029,
         "volume_target_pct": 25,
         "volume_basis": "current-day imported approved plus new approvals",
-        "volume_deviation_pp": 13.027062663063298,
+        "volume_deviation_pp": 9.19731373493029,
         "observed_obstacles": {
-          "amount_below_min": 8
+          "rejected": 10,
+          "amount_below_min": 8,
+          "expired": 2
         }
       }
     }
@@ -181,23 +187,23 @@
     "percentage": 1.0,
     "days": {
       "2026-07-30": {
-        "reference_profit_rub": 139207.98,
-        "limit_rub": 1392.07,
-        "target_rub": 1392.07,
+        "reference_profit_rub": 138162.61,
+        "limit_rub": 1381.62,
+        "target_rub": 1381.62,
         "spent_above_target_rub": 0.0,
-        "spent_rub": 1267.66,
-        "remaining_rub": 124.41
+        "spent_rub": 1343.24,
+        "remaining_rub": 38.38
       }
     }
   },
   "flow_forecast": {
     "2026-07-30": {
       "initial_operations": 100,
-      "operations": 799,
+      "operations": 793,
       "received": 90,
-      "remaining_operations": 709,
-      "observation_started_at": "2026-07-30T09:00:11+03:00",
-      "updated_at": "2026-07-30T09:55:17+03:00",
+      "remaining_operations": 703,
+      "observation_started_at": "2026-07-30T09:00:10+03:00",
+      "updated_at": "2026-07-30T09:56:12+03:00",
       "window_sec": 3600,
       "warmup_sec": 300,
       "update_sec": 60,
@@ -223,19 +229,19 @@
     }
   },
   "quality": {
-    "external_brier_score": 0.04800843750204562,
-    "avg_payout_latency_sec": 35.453066666666665,
-    "avg_queue_wait_sec": 1.2092222222222222,
-    "avg_end_to_end_latency_sec": 36.66228888888889,
-    "total_sends": 90,
+    "external_brier_score": 0.15120286213517767,
+    "avg_payout_latency_sec": 41.15954444444444,
+    "avg_queue_wait_sec": 1.6705555555555556,
+    "avg_end_to_end_latency_sec": 42.8301,
+    "total_sends": 106,
     "payouts_over_target_latency": 0
   },
-  "profit_rub": 22636.01,
-  "external_profit_rub": 22618.44,
-  "peak_parallel": 3,
+  "profit_rub": 23675.32,
+  "external_profit_rub": 18491.91,
+  "peak_parallel": 4,
   "seed": 8,
   "workers": 8,
-  "scenario": "all_approve",
+  "scenario": "size_sensitive",
   "arrivals": {
     "mode": "created_at",
     "visibility": "all received operations; no future arrivals; workers limit execution only"
@@ -279,8 +285,8 @@
   },
   "state": {
     "current_day": "2026-07-30",
-    "version": 180,
-    "peak_parallel": 3,
+    "version": 212,
+    "peak_parallel": 4,
     "initial_state": {
       "snapshot_at": "2026-07-30T09:00:00.000000+03:00",
       "in_progress_mode": "queued",
@@ -288,7 +294,7 @@
       "queue_basis": "only supplied operations with IDs; snapshot aggregates do not create payments",
       "timestamp_basis": "providers.snapshot_at",
       "source_day": "2026-07-30",
-      "processing_started_at": "2026-07-30T09:00:11.259999+03:00",
+      "processing_started_at": "2026-07-30T09:00:10.929999+03:00",
       "daily_amounts_applied": true,
       "providers": {
         "vipay": {
@@ -360,23 +366,25 @@
         "queued": 0,
         "providers": {
           "vipay": {
-            "sent": 21,
-            "completed": 21,
-            "approved": 21,
-            "rejected": 0,
-            "expired": 0,
-            "approved_cents": 363800000,
+            "sent": 26,
+            "completed": 26,
+            "approved": 22,
+            "rejected": 2,
+            "expired": 2,
+            "approved_cents": 370150000,
             "initial_approved_cents": 320000000,
-            "profit_cents": 131529,
-            "latency_sum_sec": 834.8729999999998,
-            "peak_active_count": 2,
+            "profit_cents": 151334,
+            "latency_sum_sec": 1127.0859999999998,
+            "peak_active_count": 3,
             "opening_exposure_cents": 320000000,
-            "peak_exposure_cents": 363800000,
+            "peak_exposure_cents": 373350000,
             "reasons": {
               "bank_not_supported": 49,
-              "budget_insufficient_for_concession": 6,
+              "rejected": 2,
+              "budget_insufficient_for_concession": 2,
               "amount_below_min": 8,
-              "amount_exceeds_limit": 10
+              "amount_exceeds_limit": 10,
+              "expired": 2
             }
           },
           "payflow": {
@@ -385,51 +393,52 @@
             "approved": 17,
             "rejected": 0,
             "expired": 0,
-            "approved_cents": 298920000,
+            "approved_cents": 299570000,
             "initial_approved_cents": 290000000,
-            "profit_cents": 43332,
-            "latency_sum_sec": 881.2949999999998,
+            "profit_cents": 46934,
+            "latency_sum_sec": 865.2409999999999,
             "peak_active_count": 3,
             "opening_exposure_cents": 290000000,
-            "peak_exposure_cents": 298920000,
+            "peak_exposure_cents": 299570000,
             "reasons": {
-              "expected_latency_above_quality_limit": 6,
+              "expected_latency_above_quality_limit": 7,
               "bank_not_supported": 57,
               "amount_exceeds_limit": 23,
-              "daily_amount_limit": 19,
-              "budget_insufficient_for_concession": 1
+              "daily_amount_limit": 20
             }
           },
           "quickpay": {
             "sent": 50,
             "completed": 50,
-            "approved": 50,
-            "rejected": 0,
-            "expired": 0,
-            "approved_cents": 406650000,
+            "approved": 38,
+            "rejected": 10,
+            "expired": 2,
+            "approved_cents": 348050000,
             "initial_approved_cents": 110000000,
-            "profit_cents": 2086983,
-            "latency_sum_sec": 1445.962,
-            "peak_active_count": 2,
+            "profit_cents": 1650923,
+            "latency_sum_sec": 1526.394,
+            "peak_active_count": 3,
             "opening_exposure_cents": 110000000,
-            "peak_exposure_cents": 406650000,
+            "peak_exposure_cents": 352050000,
             "reasons": {
-              "amount_below_min": 8
+              "rejected": 10,
+              "amount_below_min": 8,
+              "expired": 2
             }
           },
           "spacepayments": {
-            "sent": 2,
-            "completed": 2,
-            "approved": 2,
+            "sent": 13,
+            "completed": 13,
+            "approved": 13,
             "rejected": 0,
             "expired": 0,
-            "approved_cents": 180000,
+            "approved_cents": 51780000,
             "initial_approved_cents": 0,
-            "profit_cents": 1757,
-            "latency_sum_sec": 28.646,
+            "profit_cents": 518341,
+            "latency_sum_sec": 185.63799999999998,
             "peak_active_count": 1,
             "opening_exposure_cents": 0,
-            "peak_exposure_cents": 180000,
+            "peak_exposure_cents": 51780000,
             "reasons": {}
           }
         },
@@ -449,24 +458,24 @@
           ],
           "rule": "nearest_rank_by_count; equal amounts stay together; upper edge inclusive"
         },
-        "profit_reference_cents": 13920798,
-        "budget_limit_cents": 139207,
-        "budget_spent_cents": 126766,
-        "forecast_operations": 799,
-        "budget_target_cents": 139207,
+        "profit_reference_cents": 13816261,
+        "budget_limit_cents": 138162,
+        "budget_spent_cents": 134324,
+        "forecast_operations": 793,
+        "budget_target_cents": 138162,
         "flow_forecast": {
           "initial_operations": 100,
-          "operations": 799,
+          "operations": 793,
           "received": 90,
-          "remaining_operations": 709,
-          "observation_started_at": "2026-07-30T09:00:11+03:00",
-          "updated_at": "2026-07-30T09:55:17+03:00",
+          "remaining_operations": 703,
+          "observation_started_at": "2026-07-30T09:00:10+03:00",
+          "updated_at": "2026-07-30T09:56:12+03:00",
           "window_sec": 3600,
           "warmup_sec": 300,
           "update_sec": 60,
           "basis": "unique_ingress_smoothed_window_rate"
         },
-        "forecast_volume": 27098085.0,
+        "forecast_volume": 26894595.0,
         "calibration_operation_ids": [
           "op_001",
           "op_002",

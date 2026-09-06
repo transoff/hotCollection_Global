@@ -77,7 +77,7 @@ end
 # провайдеры отказывают все, и заявки обязаны уйти на spacepayments, а не
 # потеряться. Заодно фиксируем, что остальные сценарии симулятора живы.
 failures += 1 unless check('все сценарии симулятора дают полный ответ') do
-  broken = %w[flat size_sensitive degraded all_reject all_approve].reject do |scenario|
+  broken = %w[flat size_sensitive degraded all_reject].reject do |scenario|
     stdout = `ruby #{CLI} --queue #{File.join(ROOT, 'data/operations_queue_10.json')} --scenario #{scenario} --quiet --no-files 2>/dev/null`
     $?.success? && (JSON.parse(stdout).length == 10 rescue false)
   end

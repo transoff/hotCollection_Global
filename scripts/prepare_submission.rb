@@ -11,10 +11,7 @@ module Submission
   ROOT = File.expand_path('..', __dir__)
   FILENAMES = %w[routing_decisions_test.json routing_report_test.json].freeze
 
-  # Сдача формируется в сценарии all_approve: автопроверка организаторов считает
-  # единственного допустимого провайдера обязательным и не моделирует отказы,
-  # а их образец routing_decisions содержит только approved.
-  def self.prepare(queue:, destination: ROOT, workers: 8, seed: 8, scenario: 'all_approve', **inputs)
+  def self.prepare(queue:, destination: ROOT, workers: 8, seed: 8, **inputs)
     raise ArgumentError, 'Укажите существующий файл --queue' unless queue && File.file?(queue)
     raise ArgumentError, 'Каталог назначения не существует' unless File.directory?(destination)
     destination = File.expand_path(destination)
@@ -27,8 +24,7 @@ module Submission
     Dir.mktmpdir('.router-submission-', destination) do |temporary|
       output = File.join(temporary, 'run')
       command = [RbConfig.ruby, File.join(ROOT, 'prototype/simple_router/cli.rb'), '--queue', File.expand_path(queue),
-                 '--workers', workers.to_s, '--seed', seed.to_s, '--scenario', scenario,
-                 '--quiet', '--output-dir', output]
+                 '--workers', workers.to_s, '--seed', seed.to_s, '--quiet', '--output-dir', output]
       inputs.each { |name, value| command.concat(["--#{name.to_s.tr('_', '-')}", value]) if value }
       stdout, stderr, status = Open3.capture3(*command)
       raise "Ошибка роутинга: #{stderr.strip}" unless status.success?
@@ -66,7 +62,6 @@ if $PROGRAM_NAME == __FILE__
     parser_options.on('--destination DIR', 'Каталог сдачи; по умолчанию корень проекта') { |value| options[:destination] = value }
     parser_options.on('--workers N', Integer, 'Количество потоков (8)') { |value| options[:workers] = value }
     parser_options.on('--seed N', Integer, 'Seed симулятора (8)') { |value| options[:seed] = value }
-    parser_options.on('--scenario NAME', 'Сценарий симулятора (all_approve)') { |value| options[:scenario] = value }
     %w[providers history settings start-at].each do |name|
       parser_options.on("--#{name} VALUE") { |value| options[name.tr('-', '_').to_sym] = value }
     end
