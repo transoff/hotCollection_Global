@@ -1,3 +1,4 @@
-corpus/
-findings/
+corpus*/
+findings*/
 *.log
+crash-*
