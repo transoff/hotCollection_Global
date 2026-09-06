@@ -24,14 +24,23 @@ class RouterRun
                  scenario: 'size_sensitive', clock: -> { Time.now }, log: nil, simulator: nil)
     raise ArgumentError, 'workers must be positive' unless workers.is_a?(Integer) && workers > 0
     raise ArgumentError, 'queue must be an array' unless payments.is_a?(Array)
+    # Повтор operation_id с другими данными — противоречие во входе, но ронять
+    # из-за него всю очередь несоразмерно: остальные заявки останутся без
+    # решений. Оставляем первую версию заявки, конфликтующую отбрасываем.
     seen = {}
-    payments.each do |payment|
+    conflicts = []
+    @payments = payments.select do |payment|
       ProviderState.validate_payment!(payment)
       id = payment['operation_id']
-      raise ArgumentError, "Conflicting duplicate: #{id}" if seen[id] && seen[id] != payment
-      seen[id] = payment
+      if seen.key?(id) && seen[id] != payment
+        conflicts << id
+        false
+      else
+        seen[id] = payment
+        true
+      end
     end
-    @payments = payments
+    STDERR.puts "WARN отброшены конфликтующие дубли operation_id: #{conflicts.uniq.join(', ')}" unless conflicts.empty?
     @unique_payments = seen.values
     @settings, @workers, @seed, @scenario, @log = settings, workers, seed, scenario, log
     @state = ProviderState.new(providers, settings: settings, history: history, clock: clock)

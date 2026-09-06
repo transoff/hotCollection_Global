@@ -53,8 +53,11 @@ end
 begin
   parser.parse!
   raise ArgumentError, "Unexpected arguments: #{ARGV.join(' ')}" unless ARGV.empty?
-  settings = RouterSettings.new(JSON.parse(File.read(options[:settings])).merge(options[:overrides]))
-  providers = JSON.parse(read_utf8(options[:providers])).fetch('providers')
+  settings = RouterSettings.new(JSON.parse(read_utf8(options[:settings])).merge(options[:overrides]))
+  providers = JSON.parse(read_utf8(options[:providers]))['providers']
+  unless providers.is_a?(Array) && !providers.empty?
+    raise ArgumentError, "#{options[:providers]}: ожидался объект с непустым массивом providers"
+  end
   start_at = options[:start_at] ? Time.iso8601(options[:start_at]) : Time.now
   epoch = Process.clock_gettime(Process::CLOCK_MONOTONIC)
   clock = -> { start_at + Process.clock_gettime(Process::CLOCK_MONOTONIC) - epoch }

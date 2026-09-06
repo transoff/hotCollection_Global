@@ -51,6 +51,36 @@ failures += 1 unless check('битая история не мешает выда
   end
 end
 
+# Находка 3: повтор operation_id с другими данными ронял всю очередь, и решений
+# не получали даже непричастные заявки. Теперь остаётся первая версия заявки,
+# конфликтующая отбрасывается с предупреждением.
+failures += 1 unless check('конфликтующий дубль не роняет очередь') do
+  Dir.mktmpdir do |dir|
+    queue = File.join(dir, 'queue.json')
+    File.write(queue, JSON.generate([
+      { 'operation_id' => 'op_1', 'created_at' => '2026-07-30T09:05:00+03:00', 'amount' => 15_000, 'bank' => 'sberbank' },
+      { 'operation_id' => 'op_1', 'created_at' => '2026-07-30T09:05:00+03:00', 'amount' => 99_000, 'bank' => 'alfa' },
+      { 'operation_id' => 'op_2', 'created_at' => '2026-07-30T09:06:00+03:00', 'amount' => 20_000, 'bank' => 'alfa' }
+    ]))
+    stdout = `ruby #{CLI} --queue #{queue} --quiet --no-files 2>#{dir}/err`
+    next [false, File.read("#{dir}/err").lines.first.to_s.strip] unless $?.success?
+
+    ids = JSON.parse(stdout).map { |d| d['operation_id'] }.sort
+    [ids == %w[op_1 op_2], "получены #{ids.inspect} вместо [op_1, op_2]"]
+  end
+end
+
+# Ветка флоучарта «допустимый пул пуст → fallback»: при all_reject внешние
+# провайдеры отказывают все, и заявки обязаны уйти на spacepayments, а не
+# потеряться. Заодно фиксируем, что остальные сценарии симулятора живы.
+failures += 1 unless check('все сценарии симулятора дают полный ответ') do
+  broken = %w[flat size_sensitive degraded all_reject].reject do |scenario|
+    stdout = `ruby #{CLI} --queue #{File.join(ROOT, 'data/operations_queue_10.json')} --scenario #{scenario} --quiet --no-files 2>/dev/null`
+    $?.success? && (JSON.parse(stdout).length == 10 rescue false)
+  end
+  [broken.empty?, "сценарии без полного ответа: #{broken.join(', ')}"]
+end
+
 # Критерий 7 ТЗ: файлы должны существовать и иметь правильную структуру, иначе
 # считается, что решение не приложено. Очередь берём с граничными суммами и
 # банком, которого нет ни у одного провайдера, — такие заявки обязаны получить
