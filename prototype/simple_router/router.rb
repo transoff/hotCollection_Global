@@ -481,7 +481,7 @@ end
 class ProviderSimulator
   def initialize(seed, settings: RouterSettings.new, scenario: 'size_sensitive')
     @seed, @settings, @scenario = seed, settings, scenario
-    raise ArgumentError, 'Unknown scenario' unless %w[flat size_sensitive degraded all_reject].include?(scenario)
+    raise ArgumentError, 'Unknown scenario' unless %w[flat size_sensitive degraded all_reject all_approve].include?(scenario)
   end
 
   def call(payment, provider)
@@ -500,6 +500,9 @@ class ProviderSimulator
       success_probability *= 0.55
     elsif @scenario == 'all_reject'
       success_probability = 0
+    elsif @scenario == 'all_approve'
+      # Как в образце организаторов: провайдер отвечает approved, каскад только по hard-constraints.
+      success_probability = 1
     end
 
     # Fallback гарантирован моделью; expired означает подтверждённое неисполнение.

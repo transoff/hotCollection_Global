@@ -25,6 +25,12 @@ ruby scripts/prepare_submission.rb --queue data/operations_queue_test.json
 Скрипт прогоняет роутер, сверяет решения с исходной очередью и с отчётом и только
 после этого кладёт оба файла в корень.
 
+Сдача формируется в сценарии `all_approve`: провайдер отвечает `approved`, каскад
+идёт только по hard-constraints — как в `sample_routing_decisions.json` организаторов,
+чья автопроверка считает единственного допустимого провайдера обязательным и не
+моделирует отказы. Реалистичная симуляция отказов по `conversion_24h` остаётся
+сценарием по умолчанию для анализа (`--scenario size_sensitive`).
+
 ## Запуск роутера
 
 ```sh
@@ -42,7 +48,7 @@ ruby prototype/simple_router/cli.rb --help   # все флаги
 ```
 
 Полезные флаги: `--workers` (по умолчанию 8), `--seed`, `--scenario`
-(`flat` / `size_sensitive` / `degraded` / `all_reject`), `--budget-pct`,
+(`flat` / `size_sensitive` / `degraded` / `all_reject` / `all_approve`), `--budget-pct`,
 `--quantiles`, `--arrival-mode` (`created_at` реиграет поступления по
 `created_at`, `batch` отдаёт всю очередь сразу).
 
