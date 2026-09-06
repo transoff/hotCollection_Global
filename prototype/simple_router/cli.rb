@@ -8,6 +8,16 @@ require 'tmpdir'
 require_relative 'harness'
 
 root = File.expand_path('../..', __dir__)
+
+# Входные файлы приходят извне и не обязаны быть в UTF-8: JSON.parse пропускает
+# битые байты дальше, а первый же strip/JSON.generate роняет весь прогон. Терять
+# все решения из-за одного символа дороже, чем обработать заявку с заменой.
+def read_utf8(path)
+  raw = File.read(path)
+  clean = raw.scrub
+  STDERR.puts "WARN #{path}: невалидные байты UTF-8 заменены" unless clean == raw
+  clean
+end
 options = { workers: 4, seed: 8, synthetic: 100, scenario: 'size_sensitive',
             providers: File.join(root, 'data/providers.json'),
             history: File.join(root, 'data/operations_history.csv'),
@@ -44,14 +54,14 @@ begin
   parser.parse!
   raise ArgumentError, "Unexpected arguments: #{ARGV.join(' ')}" unless ARGV.empty?
   settings = RouterSettings.new(JSON.parse(File.read(options[:settings])).merge(options[:overrides]))
-  providers = JSON.parse(File.read(options[:providers])).fetch('providers')
+  providers = JSON.parse(read_utf8(options[:providers])).fetch('providers')
   start_at = options[:start_at] ? Time.iso8601(options[:start_at]) : Time.now
   epoch = Process.clock_gettime(Process::CLOCK_MONOTONIC)
   clock = -> { start_at + Process.clock_gettime(Process::CLOCK_MONOTONIC) - epoch }
   history = ProviderMetrics.load_history(options[:history], before: start_at)
   history = history.last(settings['calibration_operations'])
   payments = if options[:queue]
-               JSON.parse(File.read(options[:queue]))
+               JSON.parse(read_utf8(options[:queue]))
              else
                SyntheticData.payments(options[:synthetic], history: history, seed: options[:seed], start_at: start_at)
              end
