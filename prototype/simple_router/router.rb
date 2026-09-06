@@ -33,12 +33,18 @@ class ProviderState
     snapshot_time = snapshot_at ? (snapshot_at.is_a?(Time) ? snapshot_at : Time.iso8601(snapshot_at)) : initial_time
     raise ArgumentError, 'Processing cannot start before snapshot' if initial_time < snapshot_time
     @initial_day = snapshot_time.getlocal('+03:00').strftime('%Y-%m-%d')
-    # У исходных резервов нет ID и исходов: храним отдельно от наших попыток.
+    # queued: агрегаты снимка не назначены провайдерам и не создают фиктивные попытки.
+    # reserved: снимок описывает уже занятые слоты и деньги конкретного провайдера.
+    # Реальную очередь с ID принимаем только через receive; резерв — через reserve_next.
+    import_reservations = settings['initial_in_progress_mode'] == 'reserved'
     @initial_load = @providers.to_h do |provider|
-      [provider['payment_system'], { count: provider.fetch('in_progress_count', 0),
-        amount: RouterMoney.cents(provider.fetch('in_progress_amount', 0)) }]
+      [provider['payment_system'], { count: import_reservations ? provider.fetch('in_progress_count', 0) : 0,
+        amount: import_reservations ? RouterMoney.cents(provider.fetch('in_progress_amount', 0)) : 0 }]
     end
     @initial_state = { snapshot_at: snapshot_time.iso8601(6),
+      in_progress_mode: settings['initial_in_progress_mode'],
+      reservations_imported: import_reservations,
+      queue_basis: 'only supplied operations with IDs; snapshot aggregates do not create payments',
       timestamp_basis: snapshot_at ? 'providers.snapshot_at' : 'assumed_at_processing_start',
       source_day: @initial_day, processing_started_at: initial_time.iso8601(6),
       daily_amounts_applied: @initial_day == initial_time.getlocal('+03:00').strftime('%Y-%m-%d'),
@@ -307,7 +313,8 @@ class ProviderState
     Marshal.load(Marshal.dump(value))
   end
 
-  # Резервы удерживают полную сумму, включая попытки предыдущего дня.
+  # Только назначенные попытки удерживают сумму; @waiting не занимает лимиты.
+  # Незавершённые резервы предыдущего дня тоже остаются занятыми.
   def exposure(name)
     active = @active.values.select { |row| row[:provider] == name }
     initial = @initial_load.fetch(name)

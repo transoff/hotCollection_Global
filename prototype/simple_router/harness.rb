@@ -297,13 +297,18 @@ class RouterRun
         recommendations << "#{name}: daily minimum not reached; inspect observed_obstacles and eligible flow. Do not override hard limits or silently expand the budget."
       end
       initial_load = snapshot[:initial_state][:providers][name]
+      imported_reservations = snapshot[:initial_state][:reservations_imported]
       if initial_load[:in_progress_count] > 0 || initial_load[:in_progress_amount] > 0
-        recommendations << "#{name}: initial_in_progress_held; snapshot lacks operation IDs and outcomes. Initial exposure stays reserved across days; obtain reconciled state before assuming it is released."
+        if imported_reservations
+          recommendations << "#{name}: initial_in_progress_held; snapshot lacks operation IDs and outcomes. Initial exposure stays reserved across days; obtain reconciled state before assuming it is released."
+        else
+          recommendations << "#{name}: initial_in_progress_unassigned; queued model does not import snapshot aggregates as provider reservations. Only supplied operations are executed; use reserved mode for already assigned in-progress."
+        end
       end
       %w[in_progress_count in_progress_amount].each do |field|
         limit = provider["#{field}_limit"]
         initial_value = initial_load[field.to_sym]
-        if limit && initial_value > limit
+        if imported_reservations && limit && initial_value > limit
           recommendations << "#{name}: initial_snapshot_over_#{field}_limit: #{initial_value} > #{limit}; new sends blocked until exposure is reconciled."
         end
       end

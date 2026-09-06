@@ -3,6 +3,9 @@
 # Регрессии по находкам фаззера. Запуск: ruby fuzz/regression_test.rb
 require 'json'
 require 'tmpdir'
+require 'open3'
+require 'rbconfig'
+require_relative '../prototype/simple_router/harness'
 
 ROOT = File.expand_path('..', __dir__)
 CLI = File.join(ROOT, 'prototype/simple_router/cli.rb')
@@ -139,6 +142,95 @@ failures += 1 unless check('произвольная очередь даёт в�
     required = %w[period total_operations distribution skip_reasons projected_daily_utilization recommendations]
     absent = required - report.keys
     [absent.empty?, "в отчёте нет полей: #{absent.join(', ')}"]
+  end
+end
+
+# Детерминированный ответ адаптера нужен только для проверки денег и резервов;
+# основной случайный симулятор и его каскады выше остаются без изменений.
+def approved_adapter
+  adapter = Object.new
+  adapter.define_singleton_method(:call) do |_payment, provider|
+    { status: 'approved', latency_sec: 1, net_margin_pct: RouterMoney.margin(provider) }
+  end
+  adapter
+end
+
+def queue_state
+  catalog = JSON.parse(File.read(File.join(ROOT, 'data/providers.json')))
+  providers = catalog['providers'].select { |p| %w[payflow spacepayments].include?(p['payment_system']) }
+  ProviderState.new(providers, settings: RouterSettings.new('sleep_scale' => 0),
+    snapshot_at: catalog['snapshot_at'], clock: -> { Time.iso8601('2026-07-30T09:08:00+03:00') })
+end
+
+failures += 1 unless check('нераспределённые 120 тыс. не блокируют 800; дневная граница сохраняется') do
+  state = queue_state
+  executor = PayoutExecutor.new(state.providers, state, approved_adapter)
+  # Это отдельные синтетические заявки общей очереди, не восстановление двух
+  # неизвестных операций из агрегатов providers.json.
+  backlog = [40_000, 40_000, 19_200, 20_800].each_with_index.map do |amount, i|
+    { 'operation_id' => "waiting#{i}", 'amount' => amount, 'bank' => 'sberbank' }
+  end
+  backlog.each { |p| state.receive(p) }
+  small = { 'operation_id' => 'first800', 'amount' => 800, 'bank' => 'sberbank' }
+  results = [executor.execute(small)] + backlog.map { |p| executor.execute(p) }
+  snapshot = state.snapshot
+  stats = snapshot[:days][snapshot[:current_day]][:providers]['payflow']
+  names = results.map { |row| row[:selected_provider] }
+  correct = names == ['payflow'] * 4 + ['spacepayments'] &&
+    stats[:approved_cents] == 300_000_000 && stats[:peak_exposure_cents] <= 300_000_000 &&
+    snapshot[:active_attempts].empty? && snapshot[:queued_payments].empty?
+  [correct, "маршруты=#{names.inspect}, approved=#{stats[:approved_cents] / 100.0}"]
+end
+
+failures += 1 unless check('конкурирующие воркеры не занимают один остаток дважды') do
+  correct = 5.times.all? do
+    state = queue_state
+    executor = PayoutExecutor.new(state.providers, state, approved_adapter)
+    small = { 'operation_id' => 'first800', 'amount' => 800, 'bank' => 'sberbank' }
+    first = state.reserve_next(small, [])
+    next false unless first[:provider] == 'payflow'
+    jobs = Queue.new
+    100.times do |i|
+      payment = { 'operation_id' => "parallel#{i}", 'amount' => 5000, 'bank' => 'sberbank' }
+      state.receive(payment)
+      jobs << payment
+    end
+    7.times { jobs << nil }
+    # Восьмой воркер уже держит 800 ₽, остальные работают независимо.
+    threads = 7.times.map do
+      Thread.new do
+        while (payment = jobs.pop)
+          executor.execute(payment)
+        end
+      end
+    end
+    threads.each(&:value)
+    state.finish(first, small, status: 'approved', latency_sec: 1, net_margin_pct: 0.5)
+    snapshot = state.snapshot
+    stats = snapshot[:days][snapshot[:current_day]][:providers]['payflow']
+    stats[:approved_cents] <= 300_000_000 && stats[:peak_exposure_cents] <= 300_000_000 &&
+      stats[:peak_active_count] <= 5 && snapshot[:active_attempts].empty? && snapshot[:queued_payments].empty?
+  end
+  [correct, 'превышен денежный/параллельный лимит либо остался резерв']
+end
+
+failures += 1 unless check('штатный queued проходит 29/29, reserved остаётся доступным') do
+  Dir.mktmpdir do |dir|
+    queue = File.join(ROOT, 'data/operations_queue_10.json')
+    stdout, stderr, status = Open3.capture3(RbConfig.ruby, CLI, '--queue', queue, '--quiet', '--no-files')
+    next [false, stderr] unless status.success?
+    decisions = JSON.parse(stdout)
+    op107 = decisions.find { |row| row['operation_id'] == 'op_107' }
+    next [false, "op107=#{op107['selected_provider']}"] unless op107['selected_provider'] == 'payflow'
+    path = File.join(dir, 'decisions.json')
+    File.write(path, stdout)
+    output, error, code = Open3.capture3(RbConfig.ruby, File.join(ROOT, 'scripts/validate_10.rb'), path)
+    next [false, output + error] unless code.success? && output.match?(/Пройдено:\s+29/)
+    reserved, error, code = Open3.capture3(RbConfig.ruby, CLI, '--queue', queue,
+      '--initial-in-progress-mode', 'reserved', '--quiet', '--no-files')
+    next [false, error] unless code.success?
+    row = JSON.parse(reserved).find { |d| d['operation_id'] == 'op_107' }
+    [row['selected_provider'] == 'spacepayments', "reserved: #{row['selected_provider']}"]
   end
 end
 

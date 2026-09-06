@@ -6,6 +6,7 @@ require 'time'
 
 class RouterSettings
   DEFAULTS = {
+    'initial_in_progress_mode' => 'queued',
     'budget_pct' => 1.0, 'quantile_groups' => 4, 'calibration_operations' => 100,
     'forecast_operations' => 100, 'prior_strength' => 20.0, 'quality_history_limit' => 2000,
     'forecast_window_sec' => 3600, 'forecast_warmup_sec' => 300, 'forecast_update_sec' => 60,
@@ -20,6 +21,9 @@ class RouterSettings
     unknown = overrides.keys - DEFAULTS.keys
     raise ArgumentError, "Unknown settings: #{unknown.join(', ')}" unless unknown.empty?
     @values = DEFAULTS.merge(overrides)
+    unless %w[queued reserved].include?(self['initial_in_progress_mode'])
+      raise ArgumentError, 'initial_in_progress_mode must be queued or reserved'
+    end
     %w[quantile_groups calibration_operations forecast_operations quality_history_limit
        forecast_window_sec forecast_warmup_sec forecast_update_sec].each do |key|
       raise ArgumentError, "#{key} must be a positive integer" unless self[key].is_a?(Integer) && self[key] > 0

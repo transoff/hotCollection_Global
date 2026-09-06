@@ -34,6 +34,7 @@ parser = OptionParser.new do |p|
   p.on('-p', '--providers FILE', 'Provider JSON with a providers array') { |v| options[:providers] = v }
   p.on('--history FILE', 'Known CSV history, strictly before processing start') { |v| options[:history] = v }
   p.on('--settings FILE', 'Configuration JSON; see settings.json') { |v| options[:settings] = v }
+  p.on('--initial-in-progress-mode MODE', 'queued: unassigned snapshot aggregates; reserved: assigned provider load') { |v| options[:overrides]['initial_in_progress_mode'] = v }
   p.on('--budget-pct N', Float, 'Daily modeled concession budget as percent of reference PROFIT') { |v| options[:overrides]['budget_pct'] = v }
   p.on('--budget-rub N', Float, 'Explicit fixed daily ruble budget, overrides percentage') { |v| options[:overrides]['budget_rub'] = v }
   p.on('--quantiles N', Integer, 'Requested equal-count groups; 1 disables segmentation') { |v| options[:overrides]['quantile_groups'] = v }

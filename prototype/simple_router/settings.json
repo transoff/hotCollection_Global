@@ -1,4 +1,5 @@
 {
+  "initial_in_progress_mode": "queued",
   "budget_pct": 1.0,
   "quantile_groups": 4,
   "calibration_operations": 100,
