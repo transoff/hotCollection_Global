@@ -72,6 +72,13 @@ HARNESS=dedup_harness.rb DYLD_INSERT_LIBRARIES=... \
 | `router_harness.rb` | одна заявка проходит весь роутинг | `RouterRun#validate!` |
 | `dedup_harness.rb` | дубли `operation_id` под 1–4 воркерами | `validate!` + счётчик `duplicate_requests` |
 | `queue_harness.rb` | очередь из 1–6 заявок против дневных лимитов и бюджета | `validate!` + полнота ответа |
+| `config_harness.rb` | битая конфигурация провайдеров | `validate!` + полнота ответа |
+
+`config_harness` целится в то, чего `validate_provider_configuration!` не
+проверяет: вывернутый диапазон сумм (`limit_amount_min > limit_amount_max`),
+отрицательные текущие счётчики (`daily_approved_amount`, `in_progress_*`),
+произвольный `status` и `banks`/`exclude_banks` не того типа. `providers.json`
+приходит от организаторов — тот же класс входа, что уже дал находку №1.
 
 `queue_harness` — ближайший к сдаче сценарий: несколько заявок за прогон, как в
 `operations_queue_test.json`. Дневные лимиты провайдеров он подменяет на
