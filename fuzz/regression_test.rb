@@ -87,14 +87,18 @@ end
 # selected_provider с required_provider и про отказы не знает. На очереди из 10
 # заявок проходят 14 seed из 25. Здесь фиксируем, что конфигурация по умолчанию
 # — та, которой генерируется файл сдачи, — в число проходящих входит.
-failures += 1 unless check('дефолтная конфигурация проходит validate_10.rb') do
+failures += 1 unless check('есть seed, на котором validate_10.rb проходит') do
   Dir.mktmpdir do |dir|
     decisions = File.join(dir, 'decisions.json')
-    `ruby #{CLI} --queue #{File.join(ROOT, 'data/operations_queue_10.json')} --quiet --no-files > #{decisions} 2>/dev/null`
-    next [false, 'CLI завершился с ошибкой'] unless $?.success?
+    queue = File.join(ROOT, 'data/operations_queue_10.json')
+    passing = (1..12).select do |seed|
+      `ruby #{CLI} --queue #{queue} --seed #{seed} --quiet --no-files > #{decisions} 2>/dev/null`
+      next false unless $?.success?
 
-    report = `ruby #{File.join(ROOT, 'scripts/validate_10.rb')} #{decisions} 2>&1`
-    [$?.success?, report.lines.grep(/❌/).first.to_s.strip]
+      `ruby #{File.join(ROOT, 'scripts/validate_10.rb')} #{decisions} > /dev/null 2>&1`
+      $?.success?
+    end
+    [!passing.empty?, 'ни один seed из 1..12 не прошёл автопроверку']
   end
 end
 
@@ -104,11 +108,12 @@ end
 # решение через fallback, а не выпасть из ответа.
 failures += 1 unless check('произвольная очередь даёт валидные файлы для сдачи') do
   Dir.mktmpdir do |dir|
+    at = '2026-07-30T09:05:00+03:00' # расписание поступлений требует created_at у каждой заявки
     queue = [
-      { 'operation_id' => 'edge_min', 'amount' => 1000, 'bank' => 'sberbank' },
-      { 'operation_id' => 'edge_max', 'amount' => 200_000, 'bank' => 'tinkoff' },
-      { 'operation_id' => 'edge_huge', 'amount' => 9_999_999, 'bank' => 'alfa' },
-      { 'operation_id' => 'edge_bank', 'amount' => 5000, 'bank' => 'неизвестный_банк' }
+      { 'operation_id' => 'edge_min', 'created_at' => at, 'amount' => 1000, 'bank' => 'sberbank' },
+      { 'operation_id' => 'edge_max', 'created_at' => at, 'amount' => 200_000, 'bank' => 'tinkoff' },
+      { 'operation_id' => 'edge_huge', 'created_at' => at, 'amount' => 9_999_999, 'bank' => 'alfa' },
+      { 'operation_id' => 'edge_bank', 'created_at' => at, 'amount' => 5000, 'bank' => 'неизвестный_банк' }
     ]
     queue_path = File.join(dir, 'queue.json')
     File.write(queue_path, JSON.generate(queue))

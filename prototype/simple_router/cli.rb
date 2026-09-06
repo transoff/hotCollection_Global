@@ -18,14 +18,16 @@ def read_utf8(path)
   STDERR.puts "WARN #{path}: невалидные байты UTF-8 заменены" unless clean == raw
   clean
 end
-options = { workers: 4, seed: 8, synthetic: 100, scenario: 'size_sensitive',
+
+options = { workers: 8, seed: 8, synthetic: 100, scenario: 'size_sensitive',
+            arrival_mode: 'created_at', arrival_profile: 'steady', arrival_interval_sec: 5.0,
             providers: File.join(root, 'data/providers.json'),
             history: File.join(root, 'data/operations_history.csv'),
             settings: File.join(__dir__, 'settings.json'), overrides: {}, quiet: false, files: true }
 
 parser = OptionParser.new do |p|
   p.banner = 'Payout Router — JSON stdout, trace stderr. Defaults: 100 synthetic payouts, 4 quantiles, 1% budget.'
-  p.on('-w', '--workers N', Integer, 'Parallel workers (default 4)') { |v| options[:workers] = v }
+  p.on('-w', '--workers N', Integer, 'Parallel workers (default 8)') { |v| options[:workers] = v }
   p.on('-s', '--seed N', Integer, 'Keyed simulator/input seed (default 8)') { |v| options[:seed] = v }
   p.on('--synthetic N', Integer, 'Synthetic incoming payouts (not N per provider/group)') { |v| options[:synthetic] = v }
   p.on('-q', '--queue FILE', 'Process actual JSON queue instead of synthetic input') { |v| options[:queue] = v }
@@ -42,7 +44,10 @@ parser = OptionParser.new do |p|
   p.on('--forecast-update-sec N', Integer, 'Minimum time between forecast updates (default 60)') { |v| options[:overrides]['forecast_update_sec'] = v }
   p.on('--sleep-scale N', Float, 'Wall delay / simulated latency; zero for reproducible single-worker comparisons') { |v| options[:overrides]['sleep_scale'] = v }
   p.on('--scenario NAME', 'flat | size_sensitive | degraded | all_reject') { |v| options[:scenario] = v }
-  p.on('--start-at ISO8601', 'Simulated processing clock origin; advances with monotonic wall time') { |v| options[:start_at] = v }
+  p.on('--arrival-mode MODE', 'created_at replays arrivals; batch makes the whole input available now') { |v| options[:arrival_mode] = v }
+  p.on('--arrival-profile PROFILE', 'Synthetic arrival profile: steady (default), batch, burst, pause') { |v| options[:arrival_profile] = v }
+  p.on('--arrival-interval-sec N', Float, 'Synthetic interarrival seconds (default 5); not a measured traffic rate') { |v| options[:arrival_interval_sec] = v }
+  p.on('--start-at ISO8601', 'Processing origin (default providers.snapshot_at, else now); cannot precede snapshot') { |v| options[:start_at] = v }
   p.on('--output-dir DIR', 'New directory for input, settings, decisions, report and snapshots') { |v| options[:output] = v }
   p.on('--no-files', 'Only JSON stdout; no saved artifacts') { options[:files] = false }
   p.on('--quiet', 'Suppress per-event trace') { options[:quiet] = true }
@@ -54,26 +59,36 @@ begin
   parser.parse!
   raise ArgumentError, "Unexpected arguments: #{ARGV.join(' ')}" unless ARGV.empty?
   settings = RouterSettings.new(JSON.parse(read_utf8(options[:settings])).merge(options[:overrides]))
-  providers = JSON.parse(read_utf8(options[:providers]))['providers']
+  catalog = JSON.parse(read_utf8(options[:providers]))
+  providers = catalog['providers']
   unless providers.is_a?(Array) && !providers.empty?
     raise ArgumentError, "#{options[:providers]}: ожидался объект с непустым массивом providers"
   end
-  start_at = options[:start_at] ? Time.iso8601(options[:start_at]) : Time.now
-  epoch = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  clock = -> { start_at + Process.clock_gettime(Process::CLOCK_MONOTONIC) - epoch }
+  snapshot_at = catalog['snapshot_at'] && Time.iso8601(catalog['snapshot_at'])
+  start_at = options[:start_at] ? Time.iso8601(options[:start_at]) : (snapshot_at || Time.now)
+  raise ArgumentError, 'Processing cannot start before snapshot' if snapshot_at && start_at < snapshot_at
   history = ProviderMetrics.load_history(options[:history], before: start_at)
   history = history.last(settings['calibration_operations'])
   payments = if options[:queue]
                JSON.parse(read_utf8(options[:queue]))
              else
-               SyntheticData.payments(options[:synthetic], history: history, seed: options[:seed], start_at: start_at)
+               SyntheticData.payments(options[:synthetic], history: history, seed: options[:seed], start_at: start_at,
+                 arrival_profile: options[:arrival_profile], arrival_interval_sec: options[:arrival_interval_sec])
              end
+  if options[:arrival_mode] == 'created_at' && settings['sleep_scale'].zero? &&
+     payments.any? { |p| p['created_at'] && Time.iso8601(p['created_at']) > start_at }
+    raise ArgumentError, 'Timed arrivals require positive sleep_scale; use --arrival-mode batch for a zero-delay batch'
+  end
+  scale = settings['sleep_scale'] > 0 ? settings['sleep_scale'] : 1.0
+  clock = SimulationClock.new(start_at, scale: scale)
   if options[:output] && File.exist?(options[:output])
     raise ArgumentError, 'Output directory already exists; choose a new one to preserve previous runs'
   end
   run = RouterRun.new(providers: providers, payments: payments, history: history, settings: settings,
                       workers: options[:workers], seed: options[:seed], scenario: options[:scenario],
-                      clock: clock, log: options[:quiet] ? nil : STDERR).run
+                      clock: clock, arrival_mode: options[:arrival_mode], wait_until: clock.method(:wait_until),
+                      snapshot_at: snapshot_at,
+                      log: options[:quiet] ? nil : STDERR).run
   if options[:files]
     if options[:output]
       output = File.expand_path(options[:output])
@@ -89,7 +104,8 @@ begin
       'routing_report_test.json' => run.report,
       'operations_input.json' => payments,
       'settings_used.json' => settings.to_h,
-      'providers_used.json' => { 'providers' => run.state.providers },
+      'providers_used.json' => catalog.merge('providers' => run.state.providers,
+        'snapshot_at' => catalog['snapshot_at'] || run.report[:state][:initial_state][:snapshot_at]),
       'history_used.json' => history
     }
     artifacts.each { |name, content| File.write(File.join(output, name), JSON.pretty_generate(content) + "\n") }

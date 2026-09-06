@@ -9,7 +9,7 @@ require_relative 'analytics'
 class ProviderState
   attr_reader :settings, :providers
 
-  def initialize(providers, settings: RouterSettings.new, history: [], clock: -> { Time.now })
+  def initialize(providers, settings: RouterSettings.new, history: [], clock: -> { Time.now }, snapshot_at: nil)
     @settings = settings
     @clock = clock
     @providers = copy(providers) # Настройки целей не должны менять исходный каталог.
@@ -21,6 +21,7 @@ class ProviderState
     @mutex = Mutex.new
     @changed = ConditionVariable.new
     @jobs = {}      # Одна выплата на operation_id; дубли ждут общий результат.
+    @waiting = {}   # Все уже поступившие, но ещё не взятые в работу выплаты.
     @active = {}    # Незавершённые попытки, удерживающие лимиты провайдеров.
     @finished = {}  # Учтённые результаты попыток: защита от повторного завершения.
     @days = {}      # Учёт по дню резервирования, включая поздние корректировки.
@@ -29,6 +30,24 @@ class ProviderState
 
     # История обучает оценщик, но не заполняет дневной оборот.
     initial_time = @clock.call
+    snapshot_time = snapshot_at ? (snapshot_at.is_a?(Time) ? snapshot_at : Time.iso8601(snapshot_at)) : initial_time
+    raise ArgumentError, 'Processing cannot start before snapshot' if initial_time < snapshot_time
+    @initial_day = snapshot_time.getlocal('+03:00').strftime('%Y-%m-%d')
+    # У исходных резервов нет ID и исходов: храним отдельно от наших попыток.
+    @initial_load = @providers.to_h do |provider|
+      [provider['payment_system'], { count: provider.fetch('in_progress_count', 0),
+        amount: RouterMoney.cents(provider.fetch('in_progress_amount', 0)) }]
+    end
+    @initial_state = { snapshot_at: snapshot_time.iso8601(6),
+      timestamp_basis: snapshot_at ? 'providers.snapshot_at' : 'assumed_at_processing_start',
+      source_day: @initial_day, processing_started_at: initial_time.iso8601(6),
+      daily_amounts_applied: @initial_day == initial_time.getlocal('+03:00').strftime('%Y-%m-%d'),
+      providers: @providers.to_h do |provider|
+        [provider['payment_system'], { daily_approved_amount: provider.fetch('daily_approved_amount', 0),
+          in_progress_count: provider.fetch('in_progress_count', 0),
+          in_progress_amount: provider.fetch('in_progress_amount', 0),
+          available_requisites: provider['available_requisites'] }]
+      end }
     known_history = history.select { |row| !row['created_at'] || Time.iso8601(row['created_at']) < initial_time }
                            .select { |row| %w[approved rejected expired].include?(row['status']) }
                            .uniq { |row| row['operation_id'] }
@@ -54,24 +73,13 @@ class ProviderState
   # Поступление регистрируется до очереди; повторные отправки не увеличивают входящий поток.
   def receive(payment)
     self.class.validate_payment!(payment)
-    @mutex.synchronize do
-      id = payment.fetch('operation_id')
-      existing = @jobs[id]
-      if existing
-        raise ArgumentError, "operation_id conflict: #{id}" unless existing[:payment] == payment
-        return
-      end
-      now = @clock.call
-      day = ensure_day(now, refresh: false)
-      @jobs[id] = { payment: copy(payment), accepted_day: day[:id], running: false }
-      day[:received] += 1
-      day[:queued] += 1
-      day[:flow].record(now)
-      refresh_forecast(day, now)
-      @calibration << payment.dup
-      @calibration.shift while @calibration.length > settings['calibration_operations']
-    end
+    @mutex.synchronize { receive_locked(payment, @clock.call) }
     nil
+  end
+
+  # Источник возвращает только наступившие события, без ожидания и внешнего I/O.
+  def receive_available(&source)
+    @mutex.synchronize { receive_available_locked(@clock.call, &source) }
   end
 
   # Дубли operation_id ждут результат первого исполнителя.
@@ -87,6 +95,7 @@ class ProviderState
         return copy(existing[:result])
       end
       existing[:running] = true
+      @waiting.delete(id)
       @days.fetch(existing[:accepted_day])[:queued] -= 1
       owner = true
     end
@@ -107,9 +116,11 @@ class ProviderState
   end
 
   # Выбор и резерв неделимы для других воркеров; ожидание ответа — вне Mutex.
-  def reserve_next(payment, excluded)
+  def reserve_next(payment, excluded, &source)
     @mutex.synchronize do
       now = @clock.call
+      # Приём всей наступившей очереди и снимок выбора имеют одну границу времени.
+      receive_available_locked(now, &source) if source
       day = ensure_day(now)
       skipped, candidates = [], []
       @providers.each do |provider|
@@ -147,7 +158,9 @@ class ProviderState
       token = { key: key, operation_id: payment['operation_id'], provider: name,
                 day_id: day[:id], amount_cents: RouterMoney.cents(payment['amount']),
                 probability: selected[:probability], selection: copy(selected),
-                metrics_version: @version, quantile_version: day[:id], started_at: now.iso8601,
+                metrics_version: @version, quantile_version: day[:id], started_at: now.iso8601(6),
+                received_at: (@jobs.dig(payment['operation_id'], :received_at) || now).iso8601(6),
+                queue_context: { received_operations: @jobs.length, waiting_operations: @waiting.length },
                 skipped: skipped, ranking: copy(ranking) }
       @active[key] = token
       @peak_parallel = [@peak_parallel, @active.length].max
@@ -210,12 +223,40 @@ class ProviderState
     @mutex.synchronize do
       ensure_day(@clock.call)
       copy({ current_day: @current_day, version: @version, peak_parallel: @peak_parallel,
-             active_attempts: @active.values, days: @days.transform_values { |day| export_day(day) },
+             initial_state: @initial_state, provider_load: provider_load,
+             active_attempts: @active.values, queued_payments: @waiting.values,
+             days: @days.transform_values { |day| export_day(day) },
              closed_day_snapshots: @snapshots })
     end
   end
 
   private
+
+  def receive_available_locked(now)
+    yield(now).each do |payment|
+      self.class.validate_payment!(payment)
+      receive_locked(payment, now)
+    end
+    nil
+  end
+
+  def receive_locked(payment, now)
+    id = payment.fetch('operation_id')
+    existing = @jobs[id]
+    if existing
+      raise ArgumentError, "operation_id conflict: #{id}" unless existing[:payment] == payment
+      return
+    end
+    day = ensure_day(now, refresh: false)
+    @jobs[id] = { payment: copy(payment), accepted_day: day[:id], received_at: now, running: false }
+    @waiting[id] = copy(payment)
+    day[:received] += 1
+    day[:queued] += 1
+    day[:flow].record(now)
+    refresh_forecast(day, now)
+    @calibration << payment.dup
+    @calibration.shift while @calibration.length > settings['calibration_operations']
+  end
 
   def validate_provider_configuration!
     names = @providers.map { |provider| provider.fetch('payment_system') }
@@ -249,6 +290,16 @@ class ProviderState
       %w[traffic_percentage volume_share_pct].each do |field|
         raise ArgumentError, "#{field} must be <= 100" if provider[field] && provider[field] > 100
       end
+      %w[daily_approved_amount in_progress_amount].each do |field|
+        value = provider.fetch(field, 0)
+        unless value.is_a?(Numeric) && value.finite? && value >= 0 && (BigDecimal(value.to_s) * 100).frac.zero?
+          raise ArgumentError, "#{name}.#{field} must be nonnegative finite money with at most two decimals"
+        end
+      end
+      count = provider.fetch('in_progress_count', 0)
+      unless count.is_a?(Integer) && count >= 0
+        raise ArgumentError, "#{name}.in_progress_count must be a nonnegative integer"
+      end
     end
   end
 
@@ -259,13 +310,26 @@ class ProviderState
   # Резервы удерживают полную сумму, включая попытки предыдущего дня.
   def exposure(name)
     active = @active.values.select { |row| row[:provider] == name }
-    { count: active.length, amount: active.sum { |row| row[:amount_cents] },
+    initial = @initial_load.fetch(name)
+    { count: initial[:count] + active.length, amount: initial[:amount] + active.sum { |row| row[:amount_cents] },
+      local_count: active.length,
       expected_count: active.sum { |row| row[:probability] },
       expected_amount: active.sum { |row| row[:probability] * row[:amount_cents] } }
   end
 
   def daily_limit(provider)
     [provider['daily_amount_limit'], provider['daily_turnover_max']].compact.min
+  end
+
+  def provider_load
+    @providers.to_h do |provider|
+      name = provider['payment_system']
+      load = exposure(name)
+      [name, { in_progress_count: load[:count], in_progress_amount_cents: load[:amount],
+        initial_in_progress_count: @initial_load[name][:count], initial_in_progress_amount_cents: @initial_load[name][:amount],
+        local_in_progress_count: load[:local_count],
+        available_requisites: name == 'spacepayments' ? nil : [provider['available_requisites'].to_i - load[:local_count], 0].max }]
+    end
   end
 
   def capacity_reasons(provider, amount, day, now)
@@ -280,7 +344,8 @@ class ProviderState
     reasons << 'daily_amount_limit' if limit && daily_exposure_cents > RouterMoney.cents(limit)
     reasons << 'in_progress_count_limit' if provider['in_progress_count_limit'] && active_count_after_send > provider['in_progress_count_limit']
     reasons << 'in_progress_amount_limit' if provider['in_progress_amount_limit'] && active_amount_after_send > RouterMoney.cents(provider['in_progress_amount_limit'])
-    reasons << 'no_available_requisites' if active_count_after_send > provider['available_requisites'].to_i
+    # available_requisites уже свободны после исходных in-progress, вычитаем только новые.
+    reasons << 'no_available_requisites' if reserved[:local_count] + 1 > provider['available_requisites'].to_i
     # RPM считает отправки, а не успехи.
     @rpm[name].reject! { |timestamp| timestamp <= now.to_f - 60 }
     reasons << 'requests_per_minute_limit' if provider['requests_per_minute_limit'] && @rpm[name].length >= provider['requests_per_minute_limit']
@@ -317,8 +382,13 @@ class ProviderState
     reference = (unit_profit * settings['forecast_operations']).floor
     budget = settings['budget_rub'] ? RouterMoney.cents(settings['budget_rub']) : (reference * settings['budget_pct'] / 100).floor
     provider_stats = @providers.each_with_object({}) do |provider, result|
+      initial_approved = id == @initial_day ? RouterMoney.cents(provider.fetch('daily_approved_amount', 0)) : 0
+      load = exposure(provider['payment_system'])
+      opening_exposure = initial_approved + load[:amount]
       result[provider['payment_system']] = { sent: 0, completed: 0, approved: 0, rejected: 0, expired: 0,
-        approved_cents: 0, profit_cents: 0, latency_sum_sec: 0.0, peak_active_count: 0, peak_exposure_cents: 0,
+        approved_cents: initial_approved, initial_approved_cents: initial_approved,
+        profit_cents: 0, latency_sum_sec: 0.0, peak_active_count: load[:count],
+        opening_exposure_cents: opening_exposure, peak_exposure_cents: opening_exposure,
         reasons: Hash.new(0) }
     end
     @current_day = id
@@ -361,9 +431,15 @@ class ProviderState
     compatible = day[:calibration].select { |sample| HardRules.reasons(sample, provider).empty? }
     fraction = compatible.length.to_f / [day[:calibration].length, 1].max
     mean_amount = compatible.empty? ? payment['amount'] : compatible.sum { |sample| sample['amount'] }.fdiv(compatible.length)
-    queued = day[:queued]
-    remaining_count = ([day[:forecast_operations] - day[:received], 0].max + queued) * fraction * row[:probability]
-    remaining_volume = remaining_count * mean_amount
+    # Уже известную очередь учитываем по её банкам и суммам, без усечения до workers/100.
+    known = @waiting.values.select { |queued| HardRules.reasons(queued, provider).empty? }
+    known_predictions = known.group_by { |queued| day[:quantiles].bucket(queued['amount']) }.values.map do |segment|
+      probability = @metrics.estimate(provider, segment.first['amount'], day[:quantiles])[:probability]
+      [probability * segment.length, probability * segment.sum { |queued| queued['amount'] }]
+    end
+    future_count = [day[:forecast_operations] - day[:received], 0].max * fraction * row[:probability]
+    remaining_count = known_predictions.sum(&:first) + future_count
+    remaining_volume = known_predictions.sum(&:last) + future_count * mean_amount
     cap = daily_limit(provider)
     remaining_volume = [remaining_volume, [cap - stats[:approved_cents] / 100.0 - load[:amount] / 100.0, 0].max].min if cap
     settings['goal_order'].map do |goal|
@@ -392,17 +468,19 @@ class ProviderState
       budget_target_cents: day[:budget_target_cents], flow_forecast: day[:flow].to_h,
       forecast_volume: day[:forecast_volume], calibration_operation_ids: day[:calibration].map { |r| r['operation_id'] },
       corrections: day[:corrections],
+      initial_in_progress: @initial_load,
       active_attempts: @active.values.select { |row| row[:day_id] == day[:id] } }
   end
 end
 
 class SimpleRouter
-  def initialize(providers, state)
+  def initialize(providers, state, arrival_source: nil)
     @state = state
+    @arrival_source = arrival_source
   end
 
   def plan(payment, excluded = [])
-    @state.reserve_next(payment, excluded)
+    @state.reserve_next(payment, excluded, &@arrival_source)
   end
 end
 
@@ -449,19 +527,21 @@ class ProviderSimulator
 end
 
 class PayoutExecutor
-  def initialize(providers, state, simulator)
+  def initialize(providers, state, simulator, arrival_source: nil)
     @providers = providers.each_with_object({}) { |p, hash| hash[p['payment_system']] = p }
     @state, @simulator = state, simulator
-    @router = SimpleRouter.new(providers, state)
+    @router = SimpleRouter.new(providers, state, arrival_source: arrival_source)
   end
 
   def execute(payment, _legacy_plan = nil)
     @state.run_once(payment) do
       attempts, excluded = [], []
       elapsed = 0.0
+      queue_wait = 0.0
       sent = 0
       loop do
         token = @router.plan(payment, excluded)
+        queue_wait = [Time.iso8601(token[:started_at]) - Time.iso8601(token[:received_at]), 0].max if sent.zero?
         token[:skipped].each do |skip|
           attempts << skip
           excluded << skip[:provider]
@@ -479,12 +559,14 @@ class PayoutExecutor
             latency_sec: outcome[:latency_sec], priority: token[:selection][:priority],
             quantile: token[:selection][:bucket] + 1, quantile_version: token[:quantile_version],
             metrics_version_before: token[:metrics_version], metrics_version_after: update[:metrics_version],
+            started_at: token[:started_at], received_at: token[:received_at], queue_context: token[:queue_context],
             concession_rub: token[:selection][:concession_cents] / 100.0, ranking: token[:ranking] } }
         yield(type: 'metrics', provider: name, update: update) if block_given?
         if outcome[:status] == 'approved'
           break({ operation_id: payment['operation_id'], selected_provider: name, attempts: attempts,
                   simulated_result: 'approved', latency_sec: elapsed.round(3), n: sent,
-                  profit_rub: update[:profit_cents] / 100.0, day_id: token[:day_id] })
+                  profit_rub: update[:profit_cents] / 100.0, day_id: token[:day_id],
+                  queue_wait_sec: queue_wait.round(3), end_to_end_latency_sec: (queue_wait + elapsed).round(3) })
         end
         excluded << name
         yield(type: 'cascade', provider: name, reason: outcome[:status]) if block_given?
