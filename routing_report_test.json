@@ -1,0 +1,618 @@
+{
+  "period": "2026-07-30",
+  "total_operations": 90,
+  "received_requests": 90,
+  "duplicate_requests": 0,
+  "distribution": {
+    "vipay": {
+      "count": 22,
+      "share_pct": 28.571,
+      "target_pct": 40.0,
+      "deviation_pp": -11.429,
+      "volume_rub": 501500.0,
+      "volume_share_pct": 16.842,
+      "volume_target_pct": 40,
+      "sent": 26,
+      "rejected": 2,
+      "expired": 2,
+      "observed_conversion": 0.8461538461538461,
+      "avg_latency_sec": 43.34946153846153,
+      "profit_rub": 1513.34,
+      "peak_active_count": 3
+    },
+    "payflow": {
+      "count": 17,
+      "share_pct": 22.078,
+      "target_pct": 35.0,
+      "deviation_pp": -12.922,
+      "volume_rub": 95700.0,
+      "volume_share_pct": 3.214,
+      "volume_target_pct": 35,
+      "sent": 17,
+      "rejected": 0,
+      "expired": 0,
+      "observed_conversion": 1.0,
+      "avg_latency_sec": 50.896529411764696,
+      "profit_rub": 469.34,
+      "peak_active_count": 3
+    },
+    "quickpay": {
+      "count": 38,
+      "share_pct": 49.351,
+      "target_pct": 25.0,
+      "deviation_pp": 24.351,
+      "volume_rub": 2380500.0,
+      "volume_share_pct": 79.944,
+      "volume_target_pct": 25,
+      "sent": 50,
+      "rejected": 10,
+      "expired": 2,
+      "observed_conversion": 0.76,
+      "avg_latency_sec": 30.52788,
+      "profit_rub": 16509.23,
+      "peak_active_count": 3
+    }
+  },
+  "distribution_basis": "new final approved external payouts only; initial turnover and fallback excluded",
+  "fallback": {
+    "count": 13,
+    "share_of_all_pct": 14.444444444444445,
+    "profit_rub": 5183.41
+  },
+  "skip_reasons": {
+    "bank_not_supported": 84,
+    "expected_latency_above_quality_limit": 7,
+    "amount_exceeds_limit": 33,
+    "amount_below_min": 16
+  },
+  "observed_obstacles": {
+    "bank_not_supported": 106,
+    "rejected": 12,
+    "budget_insufficient_for_concession": 2,
+    "amount_below_min": 16,
+    "amount_exceeds_limit": 33,
+    "expired": 4,
+    "expected_latency_above_quality_limit": 7,
+    "daily_amount_limit": 20
+  },
+  "projected_daily_utilization": {
+    "vipay": {
+      "used": 3701500.0,
+      "limit": 5000000,
+      "utilization_pct": 74.03,
+      "initial_approved_rub": 3200000.0,
+      "new_approved_rub": 501500.0,
+      "reserved_rub": 0.0,
+      "basis": "current-day imported approved plus new approvals; reservations shown separately"
+    },
+    "payflow": {
+      "used": 2995700.0,
+      "limit": 3000000,
+      "utilization_pct": 99.85666666666667,
+      "initial_approved_rub": 2900000.0,
+      "new_approved_rub": 95700.0,
+      "reserved_rub": 0.0,
+      "basis": "current-day imported approved plus new approvals; reservations shown separately"
+    },
+    "quickpay": {
+      "used": 3480500.0,
+      "limit": 8000000,
+      "utilization_pct": 43.50625,
+      "initial_approved_rub": 1100000.0,
+      "new_approved_rub": 2380500.0,
+      "reserved_rub": 0.0,
+      "basis": "current-day imported approved plus new approvals; reservations shown separately"
+    }
+  },
+  "recommendations": [
+    "vipay: доля 28.6% против цели traffic_percentage 40.0% (-11.4 pp). Основная причина исключений — bank_not_supported (49 раз). Ослабить это ограничение в настройках vipay или снизить traffic_percentage до 29%.",
+    "vipay: доля по объёму 16.8% против цели volume_share_pct 40% (-23.2 pp) при обороте 501500.0 ₽. Поднять limit_amount_max или переставить volume_share_pct выше в goal_order.",
+    "payflow: дневной лимит выработан на 99.9% (2995700.0 из 3000000 ₽), 20 раз заявка отклонена по daily_amount_limit. Снизить traffic_percentage с 35.0% или поднять daily_amount_limit.",
+    "payflow: доля 22.1% против цели traffic_percentage 35.0% (-12.9 pp). Основная причина исключений — bank_not_supported (57 раз). Ослабить это ограничение в настройках payflow или снизить traffic_percentage до 22%.",
+    "payflow: доля по объёму 3.2% против цели volume_share_pct 35% (-31.8 pp) при обороте 95700.0 ₽. Поднять limit_amount_max или переставить volume_share_pct выше в goal_order.",
+    "quickpay: доля 49.4% против цели traffic_percentage 25.0% (+24.4 pp). Поднять traffic_percentage до 49% либо расширить лимиты и banks у остальных провайдеров, чтобы разгрузить quickpay.",
+    "quickpay: 12 неуспешных попыток из 50 отправок (24.0%), каждая добавляет шаг каскада. Сузить limit_amount_min/limit_amount_max под сегменты с высокой конверсией или снизить traffic_percentage.",
+    "spacepayments принял 13 из 90 заявок (14.4%) как self-provider: для них не осталось ни одного допустимого внешнего провайдера. Расширить banks или ослабить limit_amount_min/limit_amount_max у внешних провайдеров, чтобы вернуть этот трафик.",
+    "Главная причина исключений по всем провайдерам — bank_not_supported (106 раз из 184). Это самый дешёвый параметр для пересмотра: он отсекает кандидатов до того, как заработают soft-цели.",
+    "Бюджет уступок за 2026-07-30 израсходован на 97.2% (1343.24 из 1381.62 ₽). Поднять budget_pct с 1.0%, чтобы soft-цели могли перебивать выбор по прибыли чаще."
+  ],
+  "goals": {
+    "vipay": {
+      "2026-07-30": {
+        "minimum_target_rub": 300000.0,
+        "approved_rub": 3701500.0,
+        "minimum_deficit_rub": 0,
+        "count_share_pct": 28.571428571428573,
+        "count_target_pct": 40.0,
+        "count_basis": "new observed approvals; initial approved count is not supplied",
+        "count_deviation_pp": -11.428571428571427,
+        "volume_share_pct": 36.36872770861786,
+        "volume_target_pct": 40,
+        "volume_basis": "current-day imported approved plus new approvals",
+        "volume_deviation_pp": -3.631272291382139,
+        "observed_obstacles": {
+          "bank_not_supported": 49,
+          "rejected": 2,
+          "budget_insufficient_for_concession": 2,
+          "amount_below_min": 8,
+          "amount_exceeds_limit": 10,
+          "expired": 2
+        }
+      }
+    },
+    "payflow": {
+      "2026-07-30": {
+        "minimum_target_rub": 250000.0,
+        "approved_rub": 2995700.0,
+        "minimum_deficit_rub": 0,
+        "count_share_pct": 22.07792207792208,
+        "count_target_pct": 35.0,
+        "count_basis": "new observed approvals; initial approved count is not supplied",
+        "count_deviation_pp": -12.922077922077921,
+        "volume_share_pct": 29.433958556451852,
+        "volume_target_pct": 35,
+        "volume_basis": "current-day imported approved plus new approvals",
+        "volume_deviation_pp": -5.566041443548148,
+        "observed_obstacles": {
+          "expected_latency_above_quality_limit": 7,
+          "bank_not_supported": 57,
+          "amount_exceeds_limit": 23,
+          "daily_amount_limit": 20
+        }
+      }
+    },
+    "quickpay": {
+      "2026-07-30": {
+        "minimum_target_rub": 200000.0,
+        "approved_rub": 3480500.0,
+        "minimum_deficit_rub": 0,
+        "count_share_pct": 49.35064935064935,
+        "count_target_pct": 25.0,
+        "count_basis": "new observed approvals; initial approved count is not supplied",
+        "count_deviation_pp": 24.35064935064935,
+        "volume_share_pct": 34.19731373493029,
+        "volume_target_pct": 25,
+        "volume_basis": "current-day imported approved plus new approvals",
+        "volume_deviation_pp": 9.19731373493029,
+        "observed_obstacles": {
+          "rejected": 10,
+          "amount_below_min": 8,
+          "expired": 2
+        }
+      }
+    }
+  },
+  "budget": {
+    "basis": "dynamic_flow_times_fixed_daily_profit_per_operation",
+    "percentage": 1.0,
+    "days": {
+      "2026-07-30": {
+        "reference_profit_rub": 138162.61,
+        "limit_rub": 1381.62,
+        "target_rub": 1381.62,
+        "spent_above_target_rub": 0.0,
+        "spent_rub": 1343.24,
+        "remaining_rub": 38.38
+      }
+    }
+  },
+  "flow_forecast": {
+    "2026-07-30": {
+      "initial_operations": 100,
+      "operations": 793,
+      "received": 90,
+      "remaining_operations": 703,
+      "observation_started_at": "2026-07-30T09:00:10+03:00",
+      "updated_at": "2026-07-30T09:56:12+03:00",
+      "window_sec": 3600,
+      "warmup_sec": 300,
+      "update_sec": 60,
+      "basis": "unique_ingress_smoothed_window_rate"
+    }
+  },
+  "quantiles": {
+    "2026-07-30": {
+      "boundaries": [
+        5000.0,
+        20000.0,
+        55000.0
+      ],
+      "effective_groups": 4,
+      "sample_size": 100,
+      "calibration_counts": [
+        27,
+        23,
+        28,
+        22
+      ],
+      "rule": "nearest_rank_by_count; equal amounts stay together; upper edge inclusive"
+    }
+  },
+  "quality": {
+    "external_brier_score": 0.15120286213517767,
+    "avg_payout_latency_sec": 41.15954444444444,
+    "avg_queue_wait_sec": 1.6705555555555556,
+    "avg_end_to_end_latency_sec": 42.8301,
+    "total_sends": 106,
+    "payouts_over_target_latency": 0
+  },
+  "profit_rub": 23675.32,
+  "external_profit_rub": 18491.91,
+  "peak_parallel": 4,
+  "seed": 8,
+  "workers": 8,
+  "scenario": "size_sensitive",
+  "arrivals": {
+    "mode": "created_at",
+    "visibility": "all received operations; no future arrivals; workers limit execution only"
+  },
+  "settings": {
+    "initial_in_progress_mode": "queued",
+    "budget_pct": 1.0,
+    "quantile_groups": 4,
+    "calibration_operations": 100,
+    "forecast_operations": 100,
+    "prior_strength": 20.0,
+    "quality_history_limit": 2000,
+    "forecast_window_sec": 3600,
+    "forecast_warmup_sec": 300,
+    "forecast_update_sec": 60,
+    "min_conversion": 0.5,
+    "max_expected_latency_sec": 180.0,
+    "goal_order": [
+      "daily_turnover_min",
+      "traffic_percentage",
+      "volume_share_pct"
+    ],
+    "provider_goals": {
+      "vipay": {
+        "daily_turnover_min": 300000,
+        "volume_share_pct": 40
+      },
+      "payflow": {
+        "daily_turnover_min": 250000,
+        "volume_share_pct": 35
+      },
+      "quickpay": {
+        "daily_turnover_min": 200000,
+        "volume_share_pct": 25
+      }
+    },
+    "budget_rub": null,
+    "simulation_size_effect": 0.15,
+    "simulation_margin_jitter": 0.1,
+    "sleep_scale": 0.0001
+  },
+  "state": {
+    "current_day": "2026-07-30",
+    "version": 212,
+    "peak_parallel": 4,
+    "initial_state": {
+      "snapshot_at": "2026-07-30T09:00:00.000000+03:00",
+      "in_progress_mode": "queued",
+      "reservations_imported": false,
+      "queue_basis": "only supplied operations with IDs; snapshot aggregates do not create payments",
+      "timestamp_basis": "providers.snapshot_at",
+      "source_day": "2026-07-30",
+      "processing_started_at": "2026-07-30T09:00:10.929999+03:00",
+      "daily_amounts_applied": true,
+      "providers": {
+        "vipay": {
+          "daily_approved_amount": 3200000,
+          "in_progress_count": 4,
+          "in_progress_amount": 380000,
+          "available_requisites": 12
+        },
+        "payflow": {
+          "daily_approved_amount": 2900000,
+          "in_progress_count": 2,
+          "in_progress_amount": 120000,
+          "available_requisites": 5
+        },
+        "quickpay": {
+          "daily_approved_amount": 1100000,
+          "in_progress_count": 1,
+          "in_progress_amount": 50000,
+          "available_requisites": 20
+        },
+        "spacepayments": {
+          "daily_approved_amount": 0,
+          "in_progress_count": 0,
+          "in_progress_amount": 0,
+          "available_requisites": 8
+        }
+      }
+    },
+    "provider_load": {
+      "vipay": {
+        "in_progress_count": 0,
+        "in_progress_amount_cents": 0,
+        "initial_in_progress_count": 0,
+        "initial_in_progress_amount_cents": 0,
+        "local_in_progress_count": 0,
+        "available_requisites": 12
+      },
+      "payflow": {
+        "in_progress_count": 0,
+        "in_progress_amount_cents": 0,
+        "initial_in_progress_count": 0,
+        "initial_in_progress_amount_cents": 0,
+        "local_in_progress_count": 0,
+        "available_requisites": 5
+      },
+      "quickpay": {
+        "in_progress_count": 0,
+        "in_progress_amount_cents": 0,
+        "initial_in_progress_count": 0,
+        "initial_in_progress_amount_cents": 0,
+        "local_in_progress_count": 0,
+        "available_requisites": 20
+      },
+      "spacepayments": {
+        "in_progress_count": 0,
+        "in_progress_amount_cents": 0,
+        "initial_in_progress_count": 0,
+        "initial_in_progress_amount_cents": 0,
+        "local_in_progress_count": 0,
+        "available_requisites": null
+      }
+    },
+    "active_attempts": [],
+    "queued_payments": [],
+    "days": {
+      "2026-07-30": {
+        "id": "2026-07-30",
+        "received": 90,
+        "queued": 0,
+        "providers": {
+          "vipay": {
+            "sent": 26,
+            "completed": 26,
+            "approved": 22,
+            "rejected": 2,
+            "expired": 2,
+            "approved_cents": 370150000,
+            "initial_approved_cents": 320000000,
+            "profit_cents": 151334,
+            "latency_sum_sec": 1127.0859999999998,
+            "peak_active_count": 3,
+            "opening_exposure_cents": 320000000,
+            "peak_exposure_cents": 373350000,
+            "reasons": {
+              "bank_not_supported": 49,
+              "rejected": 2,
+              "budget_insufficient_for_concession": 2,
+              "amount_below_min": 8,
+              "amount_exceeds_limit": 10,
+              "expired": 2
+            }
+          },
+          "payflow": {
+            "sent": 17,
+            "completed": 17,
+            "approved": 17,
+            "rejected": 0,
+            "expired": 0,
+            "approved_cents": 299570000,
+            "initial_approved_cents": 290000000,
+            "profit_cents": 46934,
+            "latency_sum_sec": 865.2409999999999,
+            "peak_active_count": 3,
+            "opening_exposure_cents": 290000000,
+            "peak_exposure_cents": 299570000,
+            "reasons": {
+              "expected_latency_above_quality_limit": 7,
+              "bank_not_supported": 57,
+              "amount_exceeds_limit": 23,
+              "daily_amount_limit": 20
+            }
+          },
+          "quickpay": {
+            "sent": 50,
+            "completed": 50,
+            "approved": 38,
+            "rejected": 10,
+            "expired": 2,
+            "approved_cents": 348050000,
+            "initial_approved_cents": 110000000,
+            "profit_cents": 1650923,
+            "latency_sum_sec": 1526.394,
+            "peak_active_count": 3,
+            "opening_exposure_cents": 110000000,
+            "peak_exposure_cents": 352050000,
+            "reasons": {
+              "rejected": 10,
+              "amount_below_min": 8,
+              "expired": 2
+            }
+          },
+          "spacepayments": {
+            "sent": 13,
+            "completed": 13,
+            "approved": 13,
+            "rejected": 0,
+            "expired": 0,
+            "approved_cents": 51780000,
+            "initial_approved_cents": 0,
+            "profit_cents": 518341,
+            "latency_sum_sec": 185.63799999999998,
+            "peak_active_count": 1,
+            "opening_exposure_cents": 0,
+            "peak_exposure_cents": 51780000,
+            "reasons": {}
+          }
+        },
+        "quantiles": {
+          "boundaries": [
+            5000.0,
+            20000.0,
+            55000.0
+          ],
+          "effective_groups": 4,
+          "sample_size": 100,
+          "calibration_counts": [
+            27,
+            23,
+            28,
+            22
+          ],
+          "rule": "nearest_rank_by_count; equal amounts stay together; upper edge inclusive"
+        },
+        "profit_reference_cents": 13816261,
+        "budget_limit_cents": 138162,
+        "budget_spent_cents": 134324,
+        "forecast_operations": 793,
+        "budget_target_cents": 138162,
+        "flow_forecast": {
+          "initial_operations": 100,
+          "operations": 793,
+          "received": 90,
+          "remaining_operations": 703,
+          "observation_started_at": "2026-07-30T09:00:10+03:00",
+          "updated_at": "2026-07-30T09:56:12+03:00",
+          "window_sec": 3600,
+          "warmup_sec": 300,
+          "update_sec": 60,
+          "basis": "unique_ingress_smoothed_window_rate"
+        },
+        "forecast_volume": 26894595.0,
+        "calibration_operation_ids": [
+          "op_001",
+          "op_002",
+          "op_004",
+          "op_006",
+          "op_003",
+          "op_008",
+          "op_010",
+          "op_005",
+          "op_007",
+          "op_011",
+          "op_012",
+          "op_009",
+          "op_015",
+          "op_035",
+          "op_020",
+          "op_019",
+          "op_026",
+          "op_018",
+          "op_014",
+          "op_017",
+          "op_013",
+          "op_063",
+          "op_016",
+          "op_078",
+          "op_062",
+          "op_033",
+          "op_032",
+          "op_022",
+          "op_068",
+          "op_027",
+          "op_025",
+          "op_054",
+          "op_045",
+          "op_037",
+          "op_024",
+          "op_021",
+          "op_038",
+          "op_028",
+          "op_023",
+          "op_061",
+          "op_056",
+          "op_053",
+          "op_086",
+          "op_091",
+          "op_030",
+          "op_029",
+          "op_034",
+          "op_050",
+          "op_040",
+          "op_041",
+          "op_059",
+          "op_055",
+          "op_031",
+          "op_094",
+          "op_044",
+          "op_083",
+          "op_049",
+          "op_099",
+          "op_036",
+          "op_046",
+          "op_064",
+          "op_069",
+          "op_042",
+          "op_039",
+          "op_048",
+          "op_047",
+          "op_057",
+          "op_073",
+          "op_052",
+          "op_043",
+          "op_051",
+          "op_081",
+          "op_058",
+          "op_072",
+          "op_074",
+          "op_066",
+          "op_079",
+          "op_067",
+          "op_060",
+          "op_092",
+          "op_076",
+          "op_084",
+          "op_097",
+          "op_082",
+          "op_090",
+          "op_070",
+          "op_080",
+          "op_071",
+          "op_088",
+          "op_087",
+          "op_100",
+          "op_089",
+          "op_065",
+          "op_085",
+          "op_077",
+          "op_075",
+          "op_093",
+          "op_095",
+          "op_096",
+          "op_098"
+        ],
+        "corrections": [],
+        "initial_in_progress": {
+          "vipay": {
+            "count": 0,
+            "amount": 0
+          },
+          "payflow": {
+            "count": 0,
+            "amount": 0
+          },
+          "quickpay": {
+            "count": 0,
+            "amount": 0
+          },
+          "spacepayments": {
+            "count": 0,
+            "amount": 0
+          }
+        },
+        "active_attempts": []
+      }
+    },
+    "closed_day_snapshots": {}
+  },
+  "limitations": [
+    "Synthetic experiment, not real economic evidence.",
+    "100 known operations is a calibration/forecast setting, not a provider count or queue limit.",
+    "Reference is a sample-based forecast, not an oracle or a capacity-aware optimal day.",
+    "Cascade comparison assumes conditional independence and an income-sorted tail; actual next step is reranked.",
+    "Model concession budget does not bound realized counterfactual profit loss.",
+    "Single-process memory only; no restart recovery, real bank calls or multi-process guarantees.",
+    "Reservation-day accounting; late results append corrections to immutable closed-day snapshots.",
+    "Initial aggregate in-progress has no IDs/outcomes and remains reserved, including across midnight; it is not simulated or automatically settled.",
+    "Initial approved count, profit and prior RPM send timestamps are not supplied; no counters are fabricated from aggregate money or calibration history.",
+    "Snapshot turnover is applied only on its MSK calendar day; starting on a later day discards old daily turnover but retains unresolved exposure.",
+    "Budget/minimum/quality/smoothing defaults are explicit test assumptions, not organizer-provided benefits."
+  ]
+}
