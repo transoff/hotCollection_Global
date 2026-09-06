@@ -14,7 +14,7 @@ options = { workers: 4, seed: 8, synthetic: 100, scenario: 'size_sensitive',
             settings: File.join(__dir__, 'settings.json'), overrides: {}, quiet: false, files: true }
 
 parser = OptionParser.new do |p|
-  p.banner = 'Ruby payout-router MWE — JSON stdout, trace stderr. Defaults: 100 synthetic payouts, 4 quantiles, 1% budget.'
+  p.banner = 'Payout Router — JSON stdout, trace stderr. Defaults: 100 synthetic payouts, 4 quantiles, 1% budget.'
   p.on('-w', '--workers N', Integer, 'Parallel workers (default 4)') { |v| options[:workers] = v }
   p.on('-s', '--seed N', Integer, 'Keyed simulator/input seed (default 8)') { |v| options[:seed] = v }
   p.on('--synthetic N', Integer, 'Synthetic incoming payouts (not N per provider/group)') { |v| options[:synthetic] = v }
@@ -26,7 +26,10 @@ parser = OptionParser.new do |p|
   p.on('--budget-rub N', Float, 'Explicit fixed daily ruble budget, overrides percentage') { |v| options[:overrides]['budget_rub'] = v }
   p.on('--quantiles N', Integer, 'Requested equal-count groups; 1 disables segmentation') { |v| options[:overrides]['quantile_groups'] = v }
   p.on('--known-operations N', Integer, 'Historical operations used to fit boundaries (default 100)') { |v| options[:overrides]['calibration_operations'] = v }
-  p.on('--forecast-operations N', Integer, 'Expected daily flow, not an actual queue size') { |v| options[:overrides]['forecast_operations'] = v }
+  p.on('--forecast-operations N', Integer, 'Initial flow forecast, dynamically updated from unique ingress') { |v| options[:overrides]['forecast_operations'] = v }
+  p.on('--forecast-window-sec N', Integer, 'Arrival-rate window and smoothing exposure (default 3600)') { |v| options[:overrides]['forecast_window_sec'] = v }
+  p.on('--forecast-warmup-sec N', Integer, 'Minimum observation time before extrapolation (default 300)') { |v| options[:overrides]['forecast_warmup_sec'] = v }
+  p.on('--forecast-update-sec N', Integer, 'Minimum time between forecast updates (default 60)') { |v| options[:overrides]['forecast_update_sec'] = v }
   p.on('--sleep-scale N', Float, 'Wall delay / simulated latency; zero for reproducible single-worker comparisons') { |v| options[:overrides]['sleep_scale'] = v }
   p.on('--scenario NAME', 'flat | size_sensitive | degraded | all_reject') { |v| options[:scenario] = v }
   p.on('--start-at ISO8601', 'Simulated processing clock origin; advances with monotonic wall time') { |v| options[:start_at] = v }

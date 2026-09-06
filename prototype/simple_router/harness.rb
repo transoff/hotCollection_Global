@@ -18,7 +18,6 @@ module SyntheticData
 end
 
 class RouterRun
-  FLOWCHART = 'https://www.figma.com/board/ZO9tQGaEQ2aZOjM3szS7KR/Untitled?node-id=82-160'.freeze
   attr_reader :decisions, :report, :state
 
   def initialize(providers:, payments:, history:, settings:, workers: 4, seed: 8,
@@ -42,7 +41,10 @@ class RouterRun
   def run
     queue, results = Queue.new, Queue.new
     lock = Mutex.new
-    @payments.each { |payment| queue << payment }
+    @payments.each do |payment|
+      @state.receive(payment)
+      queue << payment
+    end
     @workers.times { queue << nil }
     threads = @workers.times.map do |index|
       Thread.new do
@@ -59,7 +61,7 @@ class RouterRun
         end
       end
     end
-    # Join every worker even if one fails; do not write a partial success artifact.
+    # Ждём все потоки даже при ошибке, чтобы не сохранить частичный успех.
     errors = []
     threads.each do |thread|
       begin
@@ -186,6 +188,8 @@ class RouterRun
     fallback = @decisions.select { |d| d[:selected_provider] == 'spacepayments' }
     budget_days = days.transform_values do |day|
       { reference_profit_rub: day[:profit_reference_cents] / 100.0, limit_rub: day[:budget_limit_cents] / 100.0,
+        target_rub: day[:budget_target_cents] / 100.0,
+        spent_above_target_rub: [day[:budget_spent_cents] - day[:budget_target_cents], 0].max / 100.0,
         spent_rub: day[:budget_spent_cents] / 100.0,
         remaining_rub: (day[:budget_limit_cents] - day[:budget_spent_cents]) / 100.0 }
     end
@@ -205,7 +209,9 @@ class RouterRun
                              .each_with_object(Hash.new(0)) { |a, h| h[a[:reason]] += 1 },
       observed_obstacles: reasons, projected_daily_utilization: utilization,
       recommendations: recommendations, goals: goal_status,
-      budget: { basis: 'fixed pre-day forecast of external profit-first income; not turnover', days: budget_days },
+      budget: { basis: @settings['budget_rub'] ? 'explicit_fixed_rubles' : 'dynamic_flow_times_fixed_daily_profit_per_operation',
+                percentage: @settings['budget_pct'], days: budget_days },
+      flow_forecast: days.transform_values { |day| day[:flow_forecast] },
       quantiles: days.transform_values { |day| day[:quantiles] },
       quality: { external_brier_score: predictions.empty? ? nil : brier / predictions.length,
                  avg_payout_latency_sec: @decisions.empty? ? 0 : @decisions.sum { |d| d[:latency_sec] } / @decisions.length,
@@ -214,7 +220,7 @@ class RouterRun
       profit_rub: @decisions.sum { |d| RouterMoney.cents(d[:profit_rub]) } / 100.0,
       external_profit_rub: distribution.values.sum { |row| RouterMoney.cents(row[:profit_rub]) } / 100.0,
       peak_parallel: snapshot[:peak_parallel], seed: @seed, workers: @workers, scenario: @scenario,
-      settings: @settings.to_h, flowchart: FLOWCHART, state: snapshot,
+      settings: @settings.to_h, state: snapshot,
       limitations: ['Synthetic experiment, not real economic evidence.',
         '100 known operations is a calibration/forecast setting, not a provider count or queue limit.',
         'Reference is a sample-based forecast, not an oracle or a capacity-aware optimal day.',

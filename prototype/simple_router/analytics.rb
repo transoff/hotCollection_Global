@@ -8,6 +8,7 @@ class RouterSettings
   DEFAULTS = {
     'budget_pct' => 1.0, 'quantile_groups' => 4, 'calibration_operations' => 100,
     'forecast_operations' => 100, 'prior_strength' => 20.0, 'quality_history_limit' => 2000,
+    'forecast_window_sec' => 3600, 'forecast_warmup_sec' => 300, 'forecast_update_sec' => 60,
     'min_conversion' => 0.5, 'max_expected_latency_sec' => 180.0,
     'goal_order' => %w[daily_turnover_min traffic_percentage volume_share_pct],
     'provider_goals' => {}, 'budget_rub' => nil,
@@ -19,8 +20,12 @@ class RouterSettings
     unknown = overrides.keys - DEFAULTS.keys
     raise ArgumentError, "Unknown settings: #{unknown.join(', ')}" unless unknown.empty?
     @values = DEFAULTS.merge(overrides)
-    %w[quantile_groups calibration_operations forecast_operations quality_history_limit].each do |key|
+    %w[quantile_groups calibration_operations forecast_operations quality_history_limit
+       forecast_window_sec forecast_warmup_sec forecast_update_sec].each do |key|
       raise ArgumentError, "#{key} must be a positive integer" unless self[key].is_a?(Integer) && self[key] > 0
+    end
+    unless self['forecast_update_sec'] <= self['forecast_warmup_sec'] && self['forecast_warmup_sec'] <= self['forecast_window_sec']
+      raise ArgumentError, 'forecast intervals must satisfy update <= warmup <= window'
     end
     %w[budget_pct prior_strength min_conversion max_expected_latency_sec simulation_size_effect simulation_margin_jitter sleep_scale].each do |key|
       value = self[key]
@@ -44,6 +49,57 @@ class RouterSettings
   end
 end
 
+# Прогноз по входящим выплатам, без учёта повторных отправок и скорости обработки.
+class FlowForecast
+  attr_reader :operations, :received, :closes_at
+
+  def initialize(now, settings)
+    @settings = settings
+    @started_at = @updated_at = now.to_f
+    local = now.getlocal('+03:00')
+    @closes_at = Time.new(local.year, local.month, local.day, 0, 0, 0, '+03:00') + 86_400
+    @initial = @operations = settings['forecast_operations']
+    @prior_rate = @initial / (@closes_at.to_f - @started_at)
+    @received = 0
+    @buckets = Hash.new(0)
+  end
+
+  def record(now)
+    @received += 1
+    @buckets[now.to_i] += 1
+    # Прогноз не может быть меньше уже полученного количества выплат.
+    @operations = [@operations, @received].max
+    update(now)
+  end
+
+  def update(now)
+    timestamp = [now.to_f, @closes_at.to_f].min
+    elapsed = timestamp - @started_at
+    if timestamp >= @closes_at.to_f
+      @operations = @received
+    elsif elapsed >= @settings['forecast_warmup_sec'] && timestamp - @updated_at >= @settings['forecast_update_sec']
+      window = @settings['forecast_window_sec']
+      @buckets.delete_if { |second, _| second < timestamp - window }
+      observed_seconds = [elapsed, window].min
+      # Приор сглаживает первые поступления и короткие всплески.
+      rate = (@buckets.values.sum + @prior_rate * window) / (observed_seconds + window)
+      @operations = @received + (rate * (@closes_at.to_f - timestamp)).round
+    else
+      return
+    end
+    @updated_at = timestamp
+  end
+
+  def to_h
+    { initial_operations: @initial, operations: @operations, received: @received,
+      remaining_operations: [@operations - @received, 0].max,
+      observation_started_at: Time.at(@started_at).getlocal('+03:00').iso8601,
+      updated_at: Time.at(@updated_at).getlocal('+03:00').iso8601,
+      window_sec: @settings['forecast_window_sec'], warmup_sec: @settings['forecast_warmup_sec'],
+      update_sec: @settings['forecast_update_sec'], basis: 'unique_ingress_smoothed_window_rate' }
+  end
+end
+
 module RouterMoney
   def self.cents(rubles)
     (BigDecimal(rubles.to_s) * 100).round(0).to_i
@@ -54,7 +110,7 @@ module RouterMoney
   end
 
   def self.margin(provider)
-    # Explicit MWE assumption, consistent with the brief's negative-margin filter.
+    # Комиссии считаются включёнными в маржу.
     provider.fetch('merchant_margin_pct').to_f - provider.fetch('provider_margin_pct').to_f
   end
 end
@@ -90,6 +146,7 @@ class AmountQuantiles
   end
 end
 
+# Оценки провайдера по завершённым попыткам и размеру выплаты.
 class ProviderMetrics
   attr_reader :events
 
@@ -99,28 +156,43 @@ class ProviderMetrics
   end
 
   def record(event)
+    # Окно общее для всех провайдеров и не сбрасывается в полночь.
     @events << event.dup
     @events.shift while @events.length > @settings['quality_history_limit']
   end
 
   def estimate(provider, amount, quantiles)
-    rows = @events.select { |row| row['payment_system'] == provider.fetch('payment_system') }
-    segment = rows.select { |row| quantiles.bucket(row.fetch('amount')) == quantiles.bucket(amount) }
-    other = rows - segment
-    prior = @settings['prior_strength']
-    base_p = provider.fetch('conversion_24h').to_f
-    global_p = (rows.count { |r| r['status'] == 'approved' } + prior * base_p) / (rows.length + prior)
-    # Leave this segment out of its prior to avoid counting it twice.
-    parent_p = (other.count { |r| r['status'] == 'approved' } + prior * base_p) / (other.length + prior)
-    p = (segment.count { |r| r['status'] == 'approved' } + prior * parent_p) / (segment.length + prior)
+    amount_bucket = quantiles.bucket(amount)
+    provider_events = @events.select { |event| event['payment_system'] == provider.fetch('payment_system') }
+    segment_events = provider_events.select { |event| quantiles.bucket(event.fetch('amount')) == amount_bucket }
+    other_events = provider_events - segment_events
+    prior_strength = @settings['prior_strength']
+
+    # Приор из каталога сглаживает оценку при малой выборке.
+    base_probability = provider.fetch('conversion_24h').to_f
+    provider_successes = provider_events.count { |event| event['status'] == 'approved' }
+    segment_successes = segment_events.count { |event| event['status'] == 'approved' }
+    other_successes = other_events.count { |event| event['status'] == 'approved' }
+    global_probability = (provider_successes + prior_strength * base_probability) / (provider_events.length + prior_strength)
+
+    # Исключаем текущий сегмент из его приора, чтобы не учесть события дважды.
+    parent_probability = (other_successes + prior_strength * base_probability) / (other_events.length + prior_strength)
+    segment_probability = (segment_successes + prior_strength * parent_probability) / (segment_events.length + prior_strength)
+
     base_latency = provider.fetch('avg_latency_sec', 30).to_f
-    parent_latency = (other.sum { |r| r['latency_sec'].to_f } + prior * base_latency) / (other.length + prior)
-    latency = (segment.sum { |r| r['latency_sec'].to_f } + prior * parent_latency) / (segment.length + prior)
-    observed = segment.select { |r| r['status'] == 'approved' && r.key?('net_margin_pct') }
-    margin = (observed.sum { |r| r['net_margin_pct'] } + prior * RouterMoney.margin(provider)) / (observed.length + prior)
-    { probability: p, global_probability: global_p, latency_sec: latency, margin_pct: margin,
-      observed_attempts: rows.length, segment_attempts: segment.length,
-      segment_successes: segment.count { |r| r['status'] == 'approved' }, bucket: quantiles.bucket(amount) }
+    other_latency_sum = other_events.sum { |event| event['latency_sec'].to_f }
+    segment_latency_sum = segment_events.sum { |event| event['latency_sec'].to_f }
+    parent_latency = (other_latency_sum + prior_strength * base_latency) / (other_events.length + prior_strength)
+    segment_latency = (segment_latency_sum + prior_strength * parent_latency) / (segment_events.length + prior_strength)
+
+    # Отказы не являются наблюдениями нулевой маржи.
+    observed_margins = segment_events.select { |event| event['status'] == 'approved' && event.key?('net_margin_pct') }
+    margin_sum = observed_margins.sum { |event| event['net_margin_pct'] }
+    margin = (margin_sum + prior_strength * RouterMoney.margin(provider)) / (observed_margins.length + prior_strength)
+
+    { probability: segment_probability, global_probability: global_probability, latency_sec: segment_latency, margin_pct: margin,
+      observed_attempts: provider_events.length, segment_attempts: segment_events.length,
+      segment_successes: segment_successes, bucket: amount_bucket }
   end
 
   def self.load_history(path, before:)
@@ -144,6 +216,7 @@ module HardRules
     reasons << 'amount_exceeds_limit' if provider['limit_amount_max'] && amount > provider['limit_amount_max']
     reasons << 'no_available_requisites' if provider['available_requisites'].to_i <= 0
     banks = provider['banks'] || []
+    # Пустой список разрешает все банки; exclude_banks инвертирует непустой список.
     if banks.any?
       rejected = provider['exclude_banks'] ? banks.include?(payment['bank']) : !banks.include?(payment['bank'])
       reasons << 'bank_not_supported' if rejected
@@ -162,8 +235,7 @@ class RoutingPolicy
     rows = candidates.map do |candidate|
       candidate.merge(income_cents: RouterMoney.profit_cents(payment['amount'], candidate[:margin_pct]))
     end
-    # V(first + income-sorted tail). Independent conditional attempts are a TEST MODEL.
-    # This is not an exact daily optimizer under changing capacity and future traffic.
+    # Ожидаемый доход каскада при условно независимых попытках, без fallback.
     rows.map do |first|
       route = [first] + (rows - [first]).sort_by { |r| [-r[:income_cents], r[:latency_sec], r[:provider]] }
       reach = 1.0
@@ -187,7 +259,7 @@ class RoutingPolicy
       names = rejected.map { |row| row[:provider] }
       excluded.concat(names)
       remaining.reject! { |row| names.include?(row[:provider]) }
-      # Reprice the tail after exclusions; never score an already excluded provider.
+      # Пересчитываем хвост без исключённых провайдеров.
     end
   end
 
@@ -199,7 +271,7 @@ class RoutingPolicy
       row[:budget_allowed] = row[:concession_cents] <= budget_remaining
     end
     selected = best
-    # Explicit lexicographic goals. Pay only for an improvement over the profit-first choice.
+    # Цели сравниваются по порядку: уступка допустима только за улучшение цели.
     @settings['goal_order'].each_with_index do |goal, index|
       upgrades = rows.select do |row|
         row[:budget_allowed] && row[:goals][index] > best[:goals][index] + 1e-12 &&
@@ -214,7 +286,7 @@ class RoutingPolicy
       break
     end
     selected[:choice_reason] ||= 'profit_first'
-    # Merchant preferences can only break an exact economic/router-goal tie.
+    # Предпочтение мерчанта разрешает только равенство экономики и целей роутера.
     preferred = payment['preferred_provider']
     tie = rows.find do |row|
       row[:provider] == preferred && row[:concession_cents] == selected[:concession_cents] && row[:goals] == selected[:goals]

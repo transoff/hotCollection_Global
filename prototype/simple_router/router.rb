@@ -5,47 +5,35 @@ require 'thread'
 require 'zlib'
 require_relative 'analytics'
 
-# CLI MWE of FigJam v6. One process, shared Mutex; no real payment API.
+# Общее состояние провайдеров для воркеров одного процесса.
 class ProviderState
   attr_reader :settings, :providers
 
   def initialize(providers, settings: RouterSettings.new, history: [], clock: -> { Time.now })
     @settings = settings
     @clock = clock
-    @providers = Marshal.load(Marshal.dump(providers))
-    names = @providers.map { |p| p.fetch('payment_system') }
-    raise ArgumentError, 'Provider names must be unique; spacepayments is required' unless names.uniq == names && names.include?('spacepayments')
-    goals = settings['provider_goals']
-    raise ArgumentError, 'provider_goals must reference configured providers' unless goals.is_a?(Hash) && (goals.keys - names).empty?
-    @providers.each do |provider|
-      name = provider.fetch('payment_system')
-      provider.merge!(goals.fetch(name, {})) unless name == 'spacepayments'
-      %w[conversion_24h merchant_margin_pct provider_margin_pct].each do |field|
-        v = provider[field]
-        raise ArgumentError, "#{name}.#{field} must be finite" unless v.is_a?(Numeric) && v.finite?
-      end
-      raise ArgumentError, 'conversion_24h must be in 0..1' unless (0..1).cover?(provider['conversion_24h'])
-      %w[limit_amount_min limit_amount_max daily_amount_limit daily_turnover_max daily_turnover_min
-         in_progress_count_limit in_progress_amount_limit requests_per_minute_limit available_requisites
-         traffic_percentage volume_share_pct avg_latency_sec].each do |field|
-        v = provider[field]
-        raise ArgumentError, "#{name}.#{field} must be nonnegative" unless v.nil? || (v.is_a?(Numeric) && v.finite? && v >= 0)
-      end
-      %w[traffic_percentage volume_share_pct].each do |field|
-        raise ArgumentError, "#{field} must be <= 100" if provider[field] && provider[field] > 100
-      end
+    @providers = copy(providers) # Настройки целей не должны менять исходный каталог.
+    validate_provider_configuration!
+    @by_name = @providers.each_with_object({}) do |provider, index|
+      index[provider['payment_system']] = provider
     end
-    @by_name = @providers.each_with_object({}) { |p, h| h[p['payment_system']] = p }
+
     @mutex = Mutex.new
     @changed = ConditionVariable.new
-    @jobs, @active, @finished, @days, @snapshots = {}, {}, {}, {}, {}
-    @rpm = Hash.new { |h, k| h[k] = [] }
+    @jobs = {}      # Одна выплата на operation_id; дубли ждут общий результат.
+    @active = {}    # Незавершённые попытки, удерживающие лимиты провайдеров.
+    @finished = {}  # Учтённые результаты попыток: защита от повторного завершения.
+    @days = {}      # Учёт по дню резервирования, включая поздние корректировки.
+    @snapshots = {} # Неизменяемые снимки дней на момент их закрытия.
+    @rpm = Hash.new { |timestamps, name| timestamps[name] = [] }
+
+    # История обучает оценщик, но не заполняет дневной оборот.
     initial_time = @clock.call
-    known = history.select { |row| !row['created_at'] || Time.iso8601(row['created_at']) < initial_time }
-                   .select { |row| %w[approved rejected expired].include?(row['status']) }
-                   .uniq { |row| row['operation_id'] }
-    @metrics = ProviderMetrics.new(known, settings)
-    @calibration = known.last(settings['calibration_operations']).map(&:dup)
+    known_history = history.select { |row| !row['created_at'] || Time.iso8601(row['created_at']) < initial_time }
+                           .select { |row| %w[approved rejected expired].include?(row['status']) }
+                           .uniq { |row| row['operation_id'] }
+    @metrics = ProviderMetrics.new(known_history, settings)
+    @calibration = known_history.last(settings['calibration_operations']).map(&:dup)
     @policy = RoutingPolicy.new(settings)
     @version = 0
     @peak_parallel = 0
@@ -63,24 +51,43 @@ class ProviderState
     true
   end
 
-  def run_once(payment)
+  # Поступление регистрируется до очереди; повторные отправки не увеличивают входящий поток.
+  def receive(payment)
     self.class.validate_payment!(payment)
+    @mutex.synchronize do
+      id = payment.fetch('operation_id')
+      existing = @jobs[id]
+      if existing
+        raise ArgumentError, "operation_id conflict: #{id}" unless existing[:payment] == payment
+        return
+      end
+      now = @clock.call
+      day = ensure_day(now, refresh: false)
+      @jobs[id] = { payment: copy(payment), accepted_day: day[:id], running: false }
+      day[:received] += 1
+      day[:queued] += 1
+      day[:flow].record(now)
+      refresh_forecast(day, now)
+      @calibration << payment.dup
+      @calibration.shift while @calibration.length > settings['calibration_operations']
+    end
+    nil
+  end
+
+  # Дубли operation_id ждут результат первого исполнителя.
+  def run_once(payment)
+    receive(payment)
     id = payment.fetch('operation_id')
     owner = false
     @mutex.synchronize do
       existing = @jobs[id]
-      if existing
-        raise ArgumentError, "operation_id conflict: #{id}" unless existing[:payment] == payment
+      if existing[:running]
         @changed.wait(@mutex) until existing[:result] || existing[:error]
         raise existing[:error] if existing[:error]
         return copy(existing[:result])
       end
-      day = ensure_day(@clock.call)
-      @jobs[id] = { payment: copy(payment), accepted_day: day[:id] }
-      day[:received] += 1
-      # Amounts are known on arrival; outcomes remain hidden. Used only NEXT day.
-      @calibration << payment.dup
-      @calibration.shift while @calibration.length > settings['calibration_operations']
+      existing[:running] = true
+      @days.fetch(existing[:accepted_day])[:queued] -= 1
       owner = true
     end
     result = yield
@@ -99,8 +106,7 @@ class ProviderState
     raise
   end
 
-  # Decision and reservation share one transaction: no stale-score/capacity window.
-  # No network call, output, or sleep occurs while this lock is held.
+  # Выбор и резерв неделимы для других воркеров; ожидание ответа — вне Mutex.
   def reserve_next(payment, excluded)
     @mutex.synchronize do
       now = @clock.call
@@ -134,6 +140,7 @@ class ProviderState
       name = selected[:provider]
       key = JSON.generate([payment.fetch('operation_id'), name])
       raise 'Repeated logical attempt' if @active.key?(key) || @finished.key?(key)
+      # Уступка учитывает принятое решение и не возвращается при отказе.
       day[:budget_spent_cents] += selected[:concession_cents]
       @rpm[name].reject! { |timestamp| timestamp <= now.to_f - 60 }
       @rpm[name] << now.to_f
@@ -167,8 +174,7 @@ class ProviderState
       raise ArgumentError, 'Invalid margin' unless margin.is_a?(Numeric) && margin.finite?
       now = @clock.call
       ensure_day(now)
-      # MWE convention: exposure, budget and approved belong to reservation day.
-      # Late completion is an append-only correction to that day's frozen snapshot.
+      # Учёт относится ко дню резерва; поздний исход не перезаписывает закрытый снимок.
       day = @days.fetch(active[:day_id])
       stats = day[:providers][active[:provider]]
       stats[:completed] += 1
@@ -182,6 +188,7 @@ class ProviderState
         stats[:reasons][status] += 1
       end
       @active.delete(token[:key])
+      # Качество учитывает все завершения, деньги — только approved.
       event = { 'operation_id' => payment['operation_id'], 'payment_system' => active[:provider],
                 'amount' => payment['amount'], 'bank' => payment['bank'], 'status' => status,
                 'latency_sec' => latency, 'created_at' => now.iso8601 }
@@ -210,10 +217,46 @@ class ProviderState
 
   private
 
+  def validate_provider_configuration!
+    names = @providers.map { |provider| provider.fetch('payment_system') }
+    unless names.uniq == names && names.include?('spacepayments')
+      raise ArgumentError, 'Provider names must be unique; spacepayments is required'
+    end
+
+    goals = settings['provider_goals']
+    unless goals.is_a?(Hash) && (goals.keys - names).empty?
+      raise ArgumentError, 'provider_goals must reference configured providers'
+    end
+
+    @providers.each do |provider|
+      name = provider.fetch('payment_system')
+      provider.merge!(goals.fetch(name, {})) unless name == 'spacepayments'
+
+      %w[conversion_24h merchant_margin_pct provider_margin_pct].each do |field|
+        value = provider[field]
+        raise ArgumentError, "#{name}.#{field} must be finite" unless value.is_a?(Numeric) && value.finite?
+      end
+      raise ArgumentError, 'conversion_24h must be in 0..1' unless (0..1).cover?(provider['conversion_24h'])
+
+      %w[limit_amount_min limit_amount_max daily_amount_limit daily_turnover_max daily_turnover_min
+         in_progress_count_limit in_progress_amount_limit requests_per_minute_limit available_requisites
+         traffic_percentage volume_share_pct avg_latency_sec].each do |field|
+        value = provider[field]
+        unless value.nil? || (value.is_a?(Numeric) && value.finite? && value >= 0)
+          raise ArgumentError, "#{name}.#{field} must be nonnegative"
+        end
+      end
+      %w[traffic_percentage volume_share_pct].each do |field|
+        raise ArgumentError, "#{field} must be <= 100" if provider[field] && provider[field] > 100
+      end
+    end
+  end
+
   def copy(value)
     Marshal.load(Marshal.dump(value))
   end
 
+  # Резервы удерживают полную сумму, включая попытки предыдущего дня.
   def exposure(name)
     active = @active.values.select { |row| row[:provider] == name }
     { count: active.length, amount: active.sum { |row| row[:amount_cents] },
@@ -227,24 +270,36 @@ class ProviderState
 
   def capacity_reasons(provider, amount, day, now)
     name = provider['payment_system']
-    load = exposure(name)
-    cents = RouterMoney.cents(amount)
+    reserved = exposure(name)
+    requested_cents = RouterMoney.cents(amount)
     reasons = []
     limit = daily_limit(provider)
-    reasons << 'daily_amount_limit' if limit && day[:providers][name][:approved_cents] + load[:amount] + cents > RouterMoney.cents(limit)
-    reasons << 'in_progress_count_limit' if provider['in_progress_count_limit'] && load[:count] + 1 > provider['in_progress_count_limit']
-    reasons << 'in_progress_amount_limit' if provider['in_progress_amount_limit'] && load[:amount] + cents > RouterMoney.cents(provider['in_progress_amount_limit'])
-    reasons << 'no_available_requisites' if load[:count] + 1 > provider['available_requisites'].to_i
+    daily_exposure_cents = day[:providers][name][:approved_cents] + reserved[:amount] + requested_cents
+    active_count_after_send = reserved[:count] + 1
+    active_amount_after_send = reserved[:amount] + requested_cents
+    reasons << 'daily_amount_limit' if limit && daily_exposure_cents > RouterMoney.cents(limit)
+    reasons << 'in_progress_count_limit' if provider['in_progress_count_limit'] && active_count_after_send > provider['in_progress_count_limit']
+    reasons << 'in_progress_amount_limit' if provider['in_progress_amount_limit'] && active_amount_after_send > RouterMoney.cents(provider['in_progress_amount_limit'])
+    reasons << 'no_available_requisites' if active_count_after_send > provider['available_requisites'].to_i
+    # RPM считает отправки, а не успехи.
     @rpm[name].reject! { |timestamp| timestamp <= now.to_f - 60 }
     reasons << 'requests_per_minute_limit' if provider['requests_per_minute_limit'] && @rpm[name].length >= provider['requests_per_minute_limit']
     reasons
   end
 
-  def ensure_day(now)
+  def ensure_day(now, refresh: true)
+    # Новые сутки MSK не сбрасывают активные резервы и историю качества.
     id = now.getlocal('+03:00').strftime('%Y-%m-%d')
     raise ArgumentError, 'Router clock cannot go backwards across days' if @current_day && id < @current_day
-    return @days[id] if @days.key?(id)
-    @snapshots[@current_day] = copy(export_day(@days[@current_day])) if @current_day
+    if @days.key?(id)
+      refresh_forecast(@days[id], now) if refresh
+      return @days[id]
+    end
+    if @current_day
+      previous = @days[@current_day]
+      refresh_forecast(previous, previous[:flow].closes_at)
+      @snapshots[@current_day] = copy(export_day(previous))
+    end
     quantiles = AmountQuantiles.new(@calibration.map { |r| r['amount'] }, groups: settings['quantile_groups'])
     samples = copy(@calibration)
     estimates = samples.map do |payment|
@@ -257,7 +312,9 @@ class ProviderState
       rows, = @policy.admissible_options(candidates, payment)
       rows.map { |row| row[:expected_profit_cents] }.max || 0
     end
-    reference = samples.empty? ? 0 : [estimates.sum / samples.length * settings['forecast_operations'], 0].max.floor
+    # Доход на выплату фиксируется на день; прогноз количества адаптируется к потоку.
+    unit_profit = samples.empty? ? 0 : [estimates.sum / samples.length, 0].max
+    reference = (unit_profit * settings['forecast_operations']).floor
     budget = settings['budget_rub'] ? RouterMoney.cents(settings['budget_rub']) : (reference * settings['budget_pct'] / 100).floor
     provider_stats = @providers.each_with_object({}) do |provider, result|
       result[provider['payment_system']] = { sent: 0, completed: 0, approved: 0, rejected: 0, expired: 0,
@@ -265,11 +322,27 @@ class ProviderState
         reasons: Hash.new(0) }
     end
     @current_day = id
-    @days[id] = { id: id, received: 0, providers: provider_stats, quantiles: quantiles,
+    @days[id] = { id: id, received: 0, queued: 0, providers: provider_stats, quantiles: quantiles,
                   calibration: samples, profit_reference_cents: reference, budget_limit_cents: budget,
+                  budget_target_cents: budget, unit_profit_cents: unit_profit,
+                  mean_amount: samples.empty? ? 0 : samples.sum { |r| r['amount'] }.fdiv(samples.length),
+                  flow: FlowForecast.new(now, settings),
                   budget_spent_cents: 0, corrections: [],
                   forecast_operations: settings['forecast_operations'],
                   forecast_volume: samples.empty? ? 0 : samples.sum { |r| r['amount'] }.fdiv(samples.length) * settings['forecast_operations'] }
+  end
+
+  def refresh_forecast(day, now)
+    day[:flow].update(now)
+    count = day[:flow].operations
+    day[:forecast_operations] = count
+    day[:forecast_volume] = day[:mean_amount] * count
+    day[:profit_reference_cents] = (day[:unit_profit_cents] * count).floor
+    target = settings['budget_rub'] ? RouterMoney.cents(settings['budget_rub']) :
+      (day[:profit_reference_cents] * settings['budget_pct'] / 100).floor
+    day[:budget_target_cents] = target
+    # Снижение прогноза не отменяет прошлые уступки, но ограничивает новые.
+    day[:budget_limit_cents] = [target, day[:budget_spent_cents]].max
   end
 
   def goal_values(provider, row, payment, day, now)
@@ -277,6 +350,7 @@ class ProviderState
     stats = day[:providers][name]
     load = exposure(name)
     external = day[:providers].reject { |key, _| key == 'spacepayments' }
+    # В план текущего дня входят только его резервы, без fallback.
     pending = @active.values.select { |entry| entry[:provider] != 'spacepayments' && entry[:day_id] == day[:id] }
     own_pending = pending.select { |entry| entry[:provider] == name }
     goal_pending_count = own_pending.sum { |entry| entry[:probability] }
@@ -287,10 +361,8 @@ class ProviderState
     compatible = day[:calibration].select { |sample| HardRules.reasons(sample, provider).empty? }
     fraction = compatible.length.to_f / [day[:calibration].length, 1].max
     mean_amount = compatible.empty? ? payment['amount'] : compatible.sum { |sample| sample['amount'] }.fdiv(compatible.length)
-    local = now.getlocal('+03:00')
-    fraction_day_left = 1 - (local.hour * 3600 + local.min * 60 + local.sec) / 86400.0
-    remaining_count = [[settings['forecast_operations'] - day[:received], 0].max,
-                       settings['forecast_operations'] * fraction_day_left].min * fraction * row[:probability]
+    queued = day[:queued]
+    remaining_count = ([day[:forecast_operations] - day[:received], 0].max + queued) * fraction * row[:probability]
     remaining_volume = remaining_count * mean_amount
     cap = daily_limit(provider)
     remaining_volume = [remaining_volume, [cap - stats[:approved_cents] / 100.0 - load[:amount] / 100.0, 0].max].min if cap
@@ -307,15 +379,17 @@ class ProviderState
       end
       next 0.0 unless target > 0
       deficit = [target - done, 0].max
+      # Срочность растёт с недобором относительно оставшегося подходящего потока.
       urgency = 1 + deficit / [capacity, progress, 1e-9].max
       [progress, deficit].min / target * urgency
     end
   end
 
   def export_day(day)
-    { id: day[:id], received: day[:received], providers: day[:providers], quantiles: day[:quantiles].to_h,
+    { id: day[:id], received: day[:received], queued: day[:queued], providers: day[:providers], quantiles: day[:quantiles].to_h,
       profit_reference_cents: day[:profit_reference_cents], budget_limit_cents: day[:budget_limit_cents],
       budget_spent_cents: day[:budget_spent_cents], forecast_operations: day[:forecast_operations],
+      budget_target_cents: day[:budget_target_cents], flow_forecast: day[:flow].to_h,
       forecast_volume: day[:forecast_volume], calibration_operation_ids: day[:calibration].map { |r| r['operation_id'] },
       corrections: day[:corrections],
       active_attempts: @active.values.select { |row| row[:day_id] == day[:id] } }
@@ -332,6 +406,7 @@ class SimpleRouter
   end
 end
 
+# Симулятор ответов провайдеров, без реальных платёжных вызовов.
 class ProviderSimulator
   def initialize(seed, settings: RouterSettings.new, scenario: 'size_sensitive')
     @seed, @settings, @scenario = seed, settings, scenario
@@ -340,23 +415,34 @@ class ProviderSimulator
 
   def call(payment, provider)
     name = provider.fetch('payment_system')
+    # Seed исхода не зависит от порядка потоков и выбранной стратегии.
     random = Random.new(Zlib.crc32("#{@seed}:#{payment.fetch('operation_id')}:#{name}"))
     success_draw, timeout_draw, latency_draw, margin_draw = Array.new(4) { random.rand }
-    p = provider.fetch('conversion_24h').to_f
+    success_probability = provider.fetch('conversion_24h').to_f
     if @scenario == 'size_sensitive'
-      # Hidden test world. Provider-specific continuous amount sensitivity, NOT router quantile IDs.
-      slope = (Zlib.crc32(name) % 2001) / 1000.0 - 1
-      size = Math.tanh(Math.log([payment['amount'], 1].max / 20_000.0))
-      p = [[p + slope * size * @settings['simulation_size_effect'], 0.01].max, 0.99].min
+      # Зависимость от суммы не использует квантили роутера.
+      provider_size_sensitivity = (Zlib.crc32(name) % 2001) / 1000.0 - 1
+      normalized_amount = Math.tanh(Math.log([payment['amount'], 1].max / 20_000.0))
+      size_adjustment = provider_size_sensitivity * normalized_amount * @settings['simulation_size_effect']
+      success_probability = [[success_probability + size_adjustment, 0.01].max, 0.99].min
     elsif @scenario == 'degraded'
-      p *= 0.55
+      success_probability *= 0.55
     elsif @scenario == 'all_reject'
-      p = 0
+      success_probability = 0
     end
-    status = name == 'spacepayments' || success_draw < p ? 'approved' : (timeout_draw < 0.25 ? 'expired' : 'rejected')
+
+    # Fallback гарантирован моделью; expired означает подтверждённое неисполнение.
+    status = if name == 'spacepayments' || success_draw < success_probability
+               'approved'
+             elsif timeout_draw < 0.25
+               'expired'
+             else
+               'rejected'
+             end
     latency = provider.fetch('avg_latency_sec', 30).to_f * (0.6 + latency_draw * 0.8)
     latency *= 2 if status == 'expired'
     margin = RouterMoney.margin(provider) * (1 + (margin_draw * 2 - 1) * @settings['simulation_margin_jitter'])
+    # sleep_scale сокращает ожидание теста, но не задержку в отчёте.
     sleep(latency * @settings['sleep_scale']) if @settings['sleep_scale'] > 0
     { status: status, latency_sec: latency.round(3), net_margin_pct: margin }
   end
