@@ -282,33 +282,66 @@ class RouterRun
           volume_deviation_pp: provider['volume_share_pct'] ? day_volume_share - provider['volume_share_pct'] : nil,
           observed_obstacles: stats[:reasons] }
       end
-      if provider_reasons['budget_insufficient_for_concession'] > 0
-        recommendations << "#{name}: compare larger budget_pct on identical seeds; #{provider_reasons['budget_insufficient_for_concession']} candidate evaluations exceeded remaining budget. This is not proof that a larger budget is profitable."
+      # Каждая рекомендация называет наблюдение с числом и параметр конфигурации,
+      # который предлагается изменить. Оговорки о модели учёта живут в limitations.
+      obstacles = provider_reasons.reject { |reason, _| %w[approved rejected expired].include?(reason) }
+      top_obstacle, top_obstacle_count = obstacles.max_by { |_, total| total }
+      target_pct = provider['traffic_percentage'].to_f
+
+      used_pct = utilization[name][:utilization_pct]
+      if used_pct && used_pct >= 85
+        blocked = provider_reasons['daily_amount_limit']
+        recommendations << "#{name}: дневной лимит выработан на #{used_pct.round(1)}% (#{used.round(2)} из #{cap} ₽)" \
+          "#{blocked.positive? ? ", #{blocked} раз заявка отклонена по daily_amount_limit" : ''}. " \
+          "Снизить traffic_percentage с #{target_pct}% или поднять daily_amount_limit."
       end
-      if provider_reasons['conversion_below_quality_floor'] > 0 || provider_reasons['rejected'] + provider_reasons['expired'] > 0
-        recommendations << "#{name}: inspect conversion by amount segment and sample size before increasing allocation."
+
+      deviation = distribution[name][:deviation_pp]
+      if deviation <= -5
+        recommendations << "#{name}: доля #{share.round(1)}% против цели traffic_percentage #{target_pct}% (#{deviation.round(1)} pp)" \
+          "#{top_obstacle ? ". Основная причина исключений — #{top_obstacle} (#{top_obstacle_count} раз)" : ''}. " \
+          "Ослабить это ограничение в настройках #{name} или снизить traffic_percentage до #{share.round}%."
+      elsif deviation >= 5
+        recommendations << "#{name}: доля #{share.round(1)}% против цели traffic_percentage #{target_pct}% (+#{deviation.round(1)} pp). " \
+          "Поднять traffic_percentage до #{share.round}% либо расширить лимиты и banks у остальных провайдеров, чтобы разгрузить #{name}."
       end
-      if goal_status[name].values.any? { |goal| goal[:minimum_deficit_rub] > 0 }
-        recommendations << "#{name}: daily minimum not reached; inspect observed_obstacles and eligible flow. Do not override hard limits or silently expand the budget."
+
+      volume_target = provider['volume_share_pct']
+      if volume_target && (volume_share - volume_target) <= -10
+        recommendations << "#{name}: доля по объёму #{volume_share.round(1)}% против цели volume_share_pct #{volume_target}% " \
+          "(#{(volume_share - volume_target).round(1)} pp) при обороте #{volume.round(2)} ₽. " \
+          "Поднять limit_amount_max или переставить volume_share_pct выше в goal_order."
       end
-      initial_load = snapshot[:initial_state][:providers][name]
-      imported_reservations = snapshot[:initial_state][:reservations_imported]
-      if initial_load[:in_progress_count] > 0 || initial_load[:in_progress_amount] > 0
-        if imported_reservations
-          recommendations << "#{name}: initial_in_progress_held; snapshot lacks operation IDs and outcomes. Initial exposure stays reserved across days; obtain reconciled state before assuming it is released."
-        else
-          recommendations << "#{name}: initial_in_progress_unassigned; queued model does not import snapshot aggregates as provider reservations. Only supplied operations are executed; use reserved mode for already assigned in-progress."
-        end
+
+      goal_status[name].each do |day_id, goal|
+        next unless goal[:minimum_deficit_rub] > 0
+        recommendations << "#{name}: дневной минимум daily_turnover_min #{goal[:minimum_target_rub]} ₽ за #{day_id} не набран, " \
+          "недобор #{goal[:minimum_deficit_rub]} ₽. Поднять daily_turnover_min в goal_order выше traffic_percentage " \
+          "или увеличить budget_pct (сейчас #{@settings['budget_pct']}%)."
       end
+
+      observed = distribution[name][:observed_conversion]
+      declared = provider['conversion_24h'].to_f
+      if observed && observed < declared - 0.05
+        recommendations << "#{name}: наблюдаемая конверсия #{observed.round(3)} ниже заявленной conversion_24h #{declared} " \
+          "на #{((declared - observed) * 100).round(1)} п.п. Снизить traffic_percentage с #{target_pct}% " \
+          "или поднять min_conversion (сейчас #{@settings['min_conversion']})."
+      end
+
+      sent_total = rows.sum { |row| row[:sent] }
+      failed_total = rows.sum { |row| row[:rejected] + row[:expired] }
+      if sent_total.positive? && failed_total * 100.0 / sent_total >= 20
+        recommendations << "#{name}: #{failed_total} неуспешных попыток из #{sent_total} отправок " \
+          "(#{(failed_total * 100.0 / sent_total).round(1)}%), каждая добавляет шаг каскада. " \
+          "Сузить limit_amount_min/limit_amount_max под сегменты с высокой конверсией или снизить traffic_percentage."
+      end
+
       %w[in_progress_count in_progress_amount].each do |field|
         limit = provider["#{field}_limit"]
-        initial_value = initial_load[field.to_sym]
-        if imported_reservations && limit && initial_value > limit
-          recommendations << "#{name}: initial_snapshot_over_#{field}_limit: #{initial_value} > #{limit}; new sends blocked until exposure is reconciled."
-        end
-      end
-      if cap && rows.any? { |row| row[:opening_exposure_cents] > RouterMoney.cents(cap) }
-        recommendations << "#{name}: initial_snapshot_over_daily_limit; opening approved plus pending exceeds #{cap} RUB. New sends are blocked, not used to fill soft goals."
+        initial_value = snapshot[:initial_state][:providers][name][field.to_sym]
+        next unless snapshot[:initial_state][:reservations_imported] && limit && initial_value > limit
+        recommendations << "#{name}: импортированная нагрузка #{field}=#{initial_value} превышает #{field}_limit #{limit}, " \
+          "новые отправки заблокированы. Сверить фактическое состояние провайдера или поднять #{field}_limit."
       end
     end
     fallback = @decisions.select { |d| d[:selected_provider] == 'spacepayments' }
@@ -319,6 +352,28 @@ class RouterRun
         spent_rub: day[:budget_spent_cents] / 100.0,
         remaining_rub: (day[:budget_limit_cents] - day[:budget_spent_cents]) / 100.0 }
     end
+    if fallback.any?
+      fallback_pct = fallback.length * 100.0 / @decisions.length
+      recommendations << "spacepayments принял #{fallback.length} из #{@decisions.length} заявок (#{fallback_pct.round(1)}%) " \
+        "как self-provider: для них не осталось ни одного допустимого внешнего провайдера. " \
+        "Расширить banks или ослабить limit_amount_min/limit_amount_max у внешних провайдеров, чтобы вернуть этот трафик."
+    end
+
+    top_reason, top_reason_count = reasons.reject { |reason, _| %w[approved rejected expired].include?(reason) }
+                                          .max_by { |_, total| total }
+    if top_reason
+      recommendations << "Главная причина исключений по всем провайдерам — #{top_reason} (#{top_reason_count} раз из " \
+        "#{reasons.reject { |r, _| %w[approved rejected expired].include?(r) }.values.sum}). " \
+        "Это самый дешёвый параметр для пересмотра: он отсекает кандидатов до того, как заработают soft-цели."
+    end
+
+    budget_days.each do |day_id, budget|
+      next unless budget[:limit_rub] > 0 && budget[:spent_rub] >= budget[:limit_rub] * 0.8
+      recommendations << "Бюджет уступок за #{day_id} израсходован на #{(budget[:spent_rub] * 100 / budget[:limit_rub]).round(1)}% " \
+        "(#{budget[:spent_rub]} из #{budget[:limit_rub]} ₽). Поднять budget_pct с #{@settings['budget_pct']}%, " \
+        "чтобы soft-цели могли перебивать выбор по прибыли чаще."
+    end
+
     predictions = @decisions.flat_map { |d| d[:attempts] }.select { |a| a[:decision] == 'selected' && a[:provider] != 'spacepayments' }
     brier = predictions.sum do |attempt|
       details = attempt[:details]
