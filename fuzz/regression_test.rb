@@ -81,6 +81,23 @@ failures += 1 unless check('все сценарии симулятора даю�
   [broken.empty?, "сценарии без полного ответа: #{broken.join(', ')}"]
 end
 
+# Находка 4: автопроверка организаторов проходит не при любом seed. Если
+# единственный допустимый по hard-constraints провайдер отклоняет заявку в
+# симуляции, роутер уходит в fallback, а validate_10.rb сверяет
+# selected_provider с required_provider и про отказы не знает. На очереди из 10
+# заявок проходят 14 seed из 25. Здесь фиксируем, что конфигурация по умолчанию
+# — та, которой генерируется файл сдачи, — в число проходящих входит.
+failures += 1 unless check('дефолтная конфигурация проходит validate_10.rb') do
+  Dir.mktmpdir do |dir|
+    decisions = File.join(dir, 'decisions.json')
+    `ruby #{CLI} --queue #{File.join(ROOT, 'data/operations_queue_10.json')} --quiet --no-files > #{decisions} 2>/dev/null`
+    next [false, 'CLI завершился с ошибкой'] unless $?.success?
+
+    report = `ruby #{File.join(ROOT, 'scripts/validate_10.rb')} #{decisions} 2>&1`
+    [$?.success?, report.lines.grep(/❌/).first.to_s.strip]
+  end
+end
+
 # Критерий 7 ТЗ: файлы должны существовать и иметь правильную структуру, иначе
 # считается, что решение не приложено. Очередь берём с граничными суммами и
 # банком, которого нет ни у одного провайдера, — такие заявки обязаны получить
