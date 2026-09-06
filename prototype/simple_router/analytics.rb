@@ -195,15 +195,37 @@ class ProviderMetrics
       segment_successes: segment_successes, bucket: amount_bucket }
   end
 
+  # Нечитаемая строка истории пропускается, а не роняет прогон: история нужна
+  # только для калибровки, и терять из-за неё все решения несоразмерно — без
+  # истории роутер работает на априорных оценках.
   def self.load_history(path, before:)
+    rows = begin
+      CSV.read(path, headers: true).map(&:to_h)
+    rescue CSV::MalformedCSVError => error
+      STDERR.puts "WARN #{path}: #{error.message.lines.first.to_s.strip}; история не используется"
+      []
+    end
+
     seen = {}
-    CSV.read(path, headers: true).map(&:to_h).select do |row|
-      valid = Time.iso8601(row.fetch('created_at')) < before && %w[approved rejected expired].include?(row['status'])
-      id = row.fetch('operation_id')
-      valid && !seen[id] && (seen[id] = true)
-    end.map do |row|
-      row.merge('amount' => Float(row.fetch('amount')), 'latency_sec' => Float(row.fetch('latency_sec')))
-    end.sort_by { |row| Time.iso8601(row['created_at']) }
+    skipped = 0
+    parsed = rows.filter_map do |row|
+      begin
+        next unless %w[approved rejected expired].include?(row['status'])
+        next unless Time.iso8601(row.fetch('created_at')) < before
+
+        id = row.fetch('operation_id')
+        next if seen[id]
+
+        seen[id] = true
+        row.merge('amount' => Float(row.fetch('amount')), 'latency_sec' => Float(row.fetch('latency_sec')))
+      rescue ArgumentError, KeyError, TypeError
+        skipped += 1
+        nil
+      end
+    end
+    STDERR.puts "WARN #{path}: пропущено нечитаемых строк истории: #{skipped}" if skipped.positive?
+
+    parsed.sort_by { |row| Time.iso8601(row['created_at']) }
   end
 end
 

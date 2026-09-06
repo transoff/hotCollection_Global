@@ -31,6 +31,26 @@ failures += 1 unless check('очередь с невалидным UTF-8 обр�
   end
 end
 
+# Находка 2: одна нечитаемая строка в operations_history.csv роняла весь прогон
+# — Float() и Time.iso8601 на мусоре, fetch на отсутствующей колонке. История
+# нужна только для калибровки, роутер работает и без неё, так что терять из-за
+# неё все решения несоразмерно.
+failures += 1 unless check('битая история не мешает выдать решения') do
+  Dir.mktmpdir do |dir|
+    history = File.join(dir, 'history.csv')
+    File.write(history, <<~CSV)
+      operation_id,created_at,amount,bank,card_brand,payment_system,status,latency_sec
+      op_1,2026-07-29T08:00:00+03:00,НЕ_ЧИСЛО,alfa,,vipay,approved,76
+      op_2,вчера,12000,alfa,,vipay,approved,76
+      op_3,2026-07-29T08:02:00+03:00,12000,alfa,,vipay,approved,79
+    CSV
+    stdout = `ruby #{CLI} --queue #{File.join(ROOT, 'data/operations_queue_10.json')} --history #{history} --quiet --no-files 2>#{dir}/err`
+    next [false, File.read("#{dir}/err").lines.first.to_s.strip] unless $?.success?
+
+    [JSON.parse(stdout).length == 10, "получено #{JSON.parse(stdout).length} решений вместо 10"]
+  end
+end
+
 # Критерий 7 ТЗ: файлы должны существовать и иметь правильную структуру, иначе
 # считается, что решение не приложено. Очередь берём с граничными суммами и
 # банком, которого нет ни у одного провайдера, — такие заявки обязаны получить
