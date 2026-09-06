@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require 'json'
-require 'thread'
 require 'zlib'
 require_relative 'analytics'
 
@@ -63,6 +62,10 @@ class ProviderState
     @version = 0
     @peak_parallel = 0
     ensure_day(initial_time)
+  end
+
+  def self.daily_limit(provider)
+    [provider['daily_amount_limit'], provider['daily_turnover_max']].compact.min
   end
 
   def self.validate_payment!(payment)
@@ -319,13 +322,7 @@ class ProviderState
     active = @active.values.select { |row| row[:provider] == name }
     initial = @initial_load.fetch(name)
     { count: initial[:count] + active.length, amount: initial[:amount] + active.sum { |row| row[:amount_cents] },
-      local_count: active.length,
-      expected_count: active.sum { |row| row[:probability] },
-      expected_amount: active.sum { |row| row[:probability] * row[:amount_cents] } }
-  end
-
-  def daily_limit(provider)
-    [provider['daily_amount_limit'], provider['daily_turnover_max']].compact.min
+      local_count: active.length }
   end
 
   def provider_load
@@ -344,7 +341,7 @@ class ProviderState
     reserved = exposure(name)
     requested_cents = RouterMoney.cents(amount)
     reasons = []
-    limit = daily_limit(provider)
+    limit = self.class.daily_limit(provider)
     daily_exposure_cents = day[:providers][name][:approved_cents] + reserved[:amount] + requested_cents
     active_count_after_send = reserved[:count] + 1
     active_amount_after_send = reserved[:amount] + requested_cents
@@ -447,7 +444,7 @@ class ProviderState
     future_count = [day[:forecast_operations] - day[:received], 0].max * fraction * row[:probability]
     remaining_count = known_predictions.sum(&:first) + future_count
     remaining_volume = known_predictions.sum(&:last) + future_count * mean_amount
-    cap = daily_limit(provider)
+    cap = self.class.daily_limit(provider)
     remaining_volume = [remaining_volume, [cap - stats[:approved_cents] / 100.0 - load[:amount] / 100.0, 0].max].min if cap
     settings['goal_order'].map do |goal|
       target, done, progress, capacity = case goal
@@ -477,17 +474,6 @@ class ProviderState
       corrections: day[:corrections],
       initial_in_progress: @initial_load,
       active_attempts: @active.values.select { |row| row[:day_id] == day[:id] } }
-  end
-end
-
-class SimpleRouter
-  def initialize(providers, state, arrival_source: nil)
-    @state = state
-    @arrival_source = arrival_source
-  end
-
-  def plan(payment, excluded = [])
-    @state.reserve_next(payment, excluded, &@arrival_source)
   end
 end
 
@@ -537,17 +523,17 @@ class PayoutExecutor
   def initialize(providers, state, simulator, arrival_source: nil)
     @providers = providers.each_with_object({}) { |p, hash| hash[p['payment_system']] = p }
     @state, @simulator = state, simulator
-    @router = SimpleRouter.new(providers, state, arrival_source: arrival_source)
+    @arrival_source = arrival_source
   end
 
-  def execute(payment, _legacy_plan = nil)
+  def execute(payment)
     @state.run_once(payment) do
       attempts, excluded = [], []
       elapsed = 0.0
       queue_wait = 0.0
       sent = 0
       loop do
-        token = @router.plan(payment, excluded)
+        token = @state.reserve_next(payment, excluded, &@arrival_source)
         queue_wait = [Time.iso8601(token[:started_at]) - Time.iso8601(token[:received_at]), 0].max if sent.zero?
         token[:skipped].each do |skip|
           attempts << skip

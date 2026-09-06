@@ -63,10 +63,6 @@ class ArrivalSchedule
     @cursor, @mutex = 0, Mutex.new
   end
 
-  def each(&block)
-    @batches.each(&block)
-  end
-
   def take_due(now)
     @mutex.synchronize do
       due = []
@@ -87,7 +83,7 @@ class RouterRun
   attr_reader :decisions, :report, :state
 
   def initialize(providers:, payments:, history:, settings:, workers: 8, seed: 8,
-                  scenario: 'size_sensitive', clock: -> { Time.now }, log: nil, simulator: nil,
+                  scenario: 'size_sensitive', clock: -> { Time.now }, log: nil,
                   arrival_mode: 'batch', wait_until: nil, snapshot_at: nil)
     raise ArgumentError, 'workers must be positive' unless workers.is_a?(Integer) && workers > 0
     raise ArgumentError, 'queue must be an array' unless payments.is_a?(Array)
@@ -116,8 +112,7 @@ class RouterRun
     @schedule = ArrivalSchedule.new(@payments, mode: arrival_mode, start_at: clock.call)
     @wait_until = wait_until || ->(target) { sleep([target - clock.call, 0].max) }
     @state = ProviderState.new(providers, settings: settings, history: history, clock: clock, snapshot_at: snapshot_at)
-    @simulator = simulator || ProviderSimulator.new(seed, settings: settings, scenario: scenario)
-    @executor = PayoutExecutor.new(@state.providers, @state, @simulator)
+    @simulator = ProviderSimulator.new(seed, settings: settings, scenario: scenario)
   end
 
   def run
@@ -221,7 +216,7 @@ class RouterRun
       @state.providers.each do |provider|
         next if provider['payment_system'] == 'spacepayments'
         stats = day[:providers].fetch(provider['payment_system'])
-        cap = [provider['daily_amount_limit'], provider['daily_turnover_max']].compact.min
+        cap = ProviderState.daily_limit(provider)
         # Перегрузка, уже присутствовавшая в снимке, не считается новой отправкой.
         allowed_peak = cap ? [RouterMoney.cents(cap), stats[:opening_exposure_cents]].max : nil
         raise 'Daily exposure limit violated' if allowed_peak && stats[:peak_exposure_cents] > allowed_peak
@@ -263,7 +258,7 @@ class RouterRun
         peak_active_count: rows.map { |r| r[:peak_active_count] }.max || 0 }
       current = days.fetch(snapshot[:current_day])[:providers][name]
       used = current[:approved_cents] / 100.0
-      cap = [provider['daily_amount_limit'], provider['daily_turnover_max']].compact.min
+      cap = ProviderState.daily_limit(provider)
       utilization[name] = { used: used, limit: cap, utilization_pct: cap && cap > 0 ? used * 100 / cap : nil,
         initial_approved_rub: current[:initial_approved_cents] / 100.0,
         new_approved_rub: (current[:approved_cents] - current[:initial_approved_cents]) / 100.0,

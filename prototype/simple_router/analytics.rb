@@ -55,7 +55,7 @@ end
 
 # Прогноз по входящим выплатам, без учёта повторных отправок и скорости обработки.
 class FlowForecast
-  attr_reader :operations, :received, :closes_at
+  attr_reader :operations, :closes_at
 
   def initialize(now, settings)
     @settings = settings
@@ -152,8 +152,6 @@ end
 
 # Оценки провайдера по завершённым попыткам и размеру выплаты.
 class ProviderMetrics
-  attr_reader :events
-
   def initialize(history, settings)
     @settings = settings
     @events = history.last(settings['quality_history_limit']).map(&:dup)
@@ -174,10 +172,8 @@ class ProviderMetrics
 
     # Приор из каталога сглаживает оценку при малой выборке.
     base_probability = provider.fetch('conversion_24h').to_f
-    provider_successes = provider_events.count { |event| event['status'] == 'approved' }
     segment_successes = segment_events.count { |event| event['status'] == 'approved' }
     other_successes = other_events.count { |event| event['status'] == 'approved' }
-    global_probability = (provider_successes + prior_strength * base_probability) / (provider_events.length + prior_strength)
 
     # Исключаем текущий сегмент из его приора, чтобы не учесть события дважды.
     parent_probability = (other_successes + prior_strength * base_probability) / (other_events.length + prior_strength)
@@ -194,7 +190,7 @@ class ProviderMetrics
     margin_sum = observed_margins.sum { |event| event['net_margin_pct'] }
     margin = (margin_sum + prior_strength * RouterMoney.margin(provider)) / (observed_margins.length + prior_strength)
 
-    { probability: segment_probability, global_probability: global_probability, latency_sec: segment_latency, margin_pct: margin,
+    { probability: segment_probability, latency_sec: segment_latency, margin_pct: margin,
       observed_attempts: provider_events.length, segment_attempts: segment_events.length,
       segment_successes: segment_successes, bucket: amount_bucket }
   end

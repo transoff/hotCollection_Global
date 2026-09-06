@@ -52,7 +52,6 @@ parser = OptionParser.new do |p|
   p.on('--output-dir DIR', 'New directory for input, settings, decisions, report and snapshots') { |v| options[:output] = v }
   p.on('--no-files', 'Only JSON stdout; no saved artifacts') { options[:files] = false }
   p.on('--quiet', 'Suppress per-event trace') { options[:quiet] = true }
-  p.on('--json', 'Compatibility flag: stdout is always JSON') {}
   p.on('-h', '--help', 'Show help') { puts p; exit }
 end
 
