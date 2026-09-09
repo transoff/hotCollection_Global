@@ -1,5 +1,8 @@
 # Умный роутинг выплат
 
+5 Place in Hack.Genesis 2026 in the next hack could be better - https://buildin.ai/share/6ddf838b-8f69-4254-8b0a-466efee62a7a?code=KBFC5P
+
+
 Роутер распределяет выплаты между платёжными провайдерами: отбирает допустимых по
 hard-constraints, выбирает лучшего по экономике и целям распределения, при отказе
 переходит к следующему, а если допустимых не осталось — уходит на self-provider
